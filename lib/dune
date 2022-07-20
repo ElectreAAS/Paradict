@@ -1,0 +1,4 @@
+(library
+ (public_name paradict)
+ (name paradict)
+ (libraries ocaml_intrinsics digestif))
