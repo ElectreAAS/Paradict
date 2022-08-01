@@ -154,7 +154,7 @@ module Make (H : Hashable) = struct
     let flag1 = to_flag l1.key lvl in
     let flag2 = to_flag l2.key lvl in
     let bmp = Int32.logor flag1 flag2 in
-    match compare flag1 flag2 with
+    match Int32.unsigned_compare flag1 flag2 with
     | 0 ->
         if lvl > max_lvl then
           (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
