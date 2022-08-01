@@ -3,6 +3,7 @@ open Extensions
 module type Hashable = sig
   type t
 
+  val compare : t -> t -> int
   val to_string : t -> string
 end
 
@@ -37,7 +38,8 @@ module Make (H : Hashable) = struct
 
   exception Recur
 
-  let value_opt key leaf = if key = leaf.key then Some leaf.value else None
+  let value_opt key leaf =
+    if H.compare key leaf.key = 0 then Some leaf.value else None
 
   let create () =
     { root = { main = Atomic.make @@ CNode { bmp = 0l; array = [||] } } }
@@ -45,12 +47,12 @@ module Make (H : Hashable) = struct
   (** NOT ATOMIC. FOR DEBUGGING PURPOSES ONLY *)
   let print t =
     let print_cnode fmt cnode =
-      Format.fprintf fmt "{CNode: %s, array length %d}\n"
+      Format.fprintf fmt "{CNode: %s, array length %d}\n%!"
         (Int32.to_string cnode.bmp)
         (Array.length cnode.array)
     in
-    let print_tnode fmt _tnode = Format.fprintf fmt "tomb node here??" in
-    let print_lnode fmt _lnode = Format.fprintf fmt "list node here??" in
+    let print_tnode fmt _tnode = Format.fprintf fmt "tomb node here??\n%!" in
+    let print_lnode fmt _lnode = Format.fprintf fmt "list node here??\n%!" in
     let printer fmt t =
       match Atomic.get t.root.main with
       | CNode x -> print_cnode fmt x
@@ -201,7 +203,12 @@ module Make (H : Hashable) = struct
             match cnode.array.(pos) with
             | INode inner -> aux inner key value (lvl + 5) (Some i)
             | Leaf l ->
-                if l.key <> key then (
+                if H.compare l.key key = 0 then (
+                  (* we need to update the new value *)
+                  let new_cnode = updated cnode pos (Leaf { key; value }) in
+                  if not @@ Atomic.compare_and_set i.main cn (CNode new_cnode)
+                  then raise Recur)
+                else
                   let new_inode =
                     INode
                       {
@@ -210,11 +217,6 @@ module Make (H : Hashable) = struct
                       }
                   in
                   let new_cnode = updated cnode pos new_inode in
-                  if not @@ Atomic.compare_and_set i.main cn (CNode new_cnode)
-                  then raise Recur)
-                else
-                  (* we need to update the new value *)
-                  let new_cnode = updated cnode pos (Leaf { key; value }) in
                   if not @@ Atomic.compare_and_set i.main cn (CNode new_cnode)
                   then raise Recur)
       | TNode _ ->
@@ -261,7 +263,7 @@ module Make (H : Hashable) = struct
               match cnode.array.(pos) with
               | INode inner -> aux inner key (lvl + 5) (Some i)
               | Leaf l ->
-                  if l.key <> key then false
+                  if H.compare l.key key <> 0 then false
                   else
                     let new_cnode = removed cnode pos flag in
                     let contracted = contract new_cnode lvl in
@@ -270,7 +272,7 @@ module Make (H : Hashable) = struct
             (if res then
              match (Atomic.get i.main, parent) with
              | TNode _, Some parent -> clean_parent parent i key (lvl - 5)
-             (* parent = None means i is the root, and the root cannot have a TNode child. *)
+             (* 'parent = None' means i is the root, and the root cannot have a TNode child. *)
              | _ -> ());
             res
       | TNode _ ->
@@ -278,7 +280,7 @@ module Make (H : Hashable) = struct
           raise Recur
       | LNode list as ln ->
           let new_list, changed =
-            List.remove_map (fun leaf -> leaf.key = key) list
+            List.remove_map (fun leaf -> H.compare leaf.key key = 0) list
           in
           changed
           && (Atomic.compare_and_set i.main ln (LNode new_list) || raise Recur)

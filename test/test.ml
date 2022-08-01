@@ -1,6 +1,7 @@
 open Paradict.Make (struct
   type t = string
 
+  let compare = compare
   let to_string x = x
 end)
 
@@ -32,7 +33,7 @@ let remove_empty =
   Alcotest.test_case "remove on empty map" `Quick @@ fun () ->
   let scores = create () in
   let removed = remove "Dead Cells" scores in
-  Alcotest.(check bool) "Remove unknown key should fail" false removed;
+  Alcotest.(check bool) "Removing an unknown key should fail" false removed;
   ()
 
 let add_remove =
@@ -40,20 +41,21 @@ let add_remove =
   let scores = create () in
   add "Portal" 7 scores;
   let removed = remove "Portal" scores in
-  Alcotest.(check bool) "Remove known key should succeed" true removed;
+  Alcotest.(check bool) "Removing a known key should succeed" true removed;
   ()
 
 let basics = [ mem_empty; add_mem; add_find; remove_empty; add_remove ]
 
 let collision_mem =
-  Alcotest.test_case "collision & mem" `Quick @@ fun () ->
+  Alcotest.test_case "collision & mem & depth" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 33 do
+  for i = 0 to 32 do
     add (string_of_int i) i numbers
   done;
-  Alcotest.(check int)
-    "After a row has been filled, depth should be 2" 2 (depth numbers);
-  for i = 0 to 33 do
+  Alcotest.(check bool)
+    "After a row has been filled, depth should be at least 2" true
+    (depth numbers >= 2);
+  for i = 0 to 32 do
     let found = find_opt (string_of_int i) numbers in
     Alcotest.(check (option int))
       (string_of_int i ^ " should be found even in case of collision")
@@ -64,5 +66,5 @@ let collision_mem =
 let collisions = [ collision_mem ]
 
 let () =
-  Alcotest.run "Everything"
+  Alcotest.run "Sequential operations"
     [ ("Basic operations", basics); ("Collisions", collisions) ]
