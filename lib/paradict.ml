@@ -125,10 +125,10 @@ module Make (H : Hashable) = struct
     | None -> ()
     | Some t -> (
         match Atomic.get t.main with
-        | CNode cnode ->
+        | CNode cnode as cn ->
             let _ignored =
               (* TODO: check if it is really ignored in the paper? *)
-              Atomic.compare_and_set t.main (CNode cnode) (compress cnode lvl)
+              Atomic.compare_and_set t.main cn (compress cnode lvl)
             in
             ()
         | _ -> ())
@@ -233,7 +233,7 @@ module Make (H : Hashable) = struct
     let main = Atomic.get t.main in
     let p_main = Atomic.get parent.main in
     match p_main with
-    | CNode cnode -> (
+    | CNode cnode as cn -> (
         let flag, pos = flagpos key lvl cnode.bmp in
         if Int32.logand flag cnode.bmp <> 0l && cnode.array.(pos) = INode t then
           match main with
@@ -241,7 +241,7 @@ module Make (H : Hashable) = struct
               let new_cnode = updated cnode pos (resurrect t) in
               if
                 not
-                @@ Atomic.compare_and_set parent.main (CNode cnode)
+                @@ Atomic.compare_and_set parent.main cn
                      (contract new_cnode lvl)
               then clean_parent parent t key lvl
           | _ -> ())
