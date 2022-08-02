@@ -127,7 +127,7 @@ module Make (H : Hashable) = struct
         match Atomic.get t.main with
         | CNode cnode as cn ->
             let _ignored =
-              (* TODO: check if it is really ignored in the paper? *)
+              (* TODO: it is ignored in the paper, but investigate if that is really wise *)
               Atomic.compare_and_set t.main cn (compress cnode lvl)
             in
             ()
