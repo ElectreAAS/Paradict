@@ -65,6 +65,89 @@ let collision_mem =
 
 let collisions = [ collision_mem ]
 
+let para_add_mem =
+  let add_bunch map i =
+    for j = 0 to 64 do
+      add (Format.sprintf "(%d, %d)" i j) 0 map
+    done;
+    let all = ref true in
+    for j = 0 to 64 do
+      all := !all && mem (Format.sprintf "(%d, %d)" i j) map
+    done;
+    !all
+  in
+  Alcotest.test_case "adds & mems" `Quick @@ fun () ->
+  let scores = create () in
+  let domains =
+    Array.init 8 (fun i -> Domain.spawn (fun () -> add_bunch scores i))
+  in
+  let all_doms = Array.for_all Domain.join domains in
+  Alcotest.(check bool)
+    "Parallel adds and mems should all find their respective values" true
+    all_doms;
+  ()
+
+let para_add_then_mem =
+  let add_bunch map i =
+    for j = 0 to 64 do
+      add (Format.sprintf "(%d, %d)" i j) 0 map
+    done
+  in
+  Alcotest.test_case "adds then mem" `Quick @@ fun () ->
+  let scores = create () in
+  let domains =
+    Array.init 8 (fun i -> Domain.spawn (fun () -> add_bunch scores i))
+  in
+  Array.iteri
+    (fun i d ->
+      Domain.join d;
+      for j = 0 to 64 do
+        let res = mem (Format.sprintf "(%d, %d)" i j) scores in
+        Alcotest.(check bool)
+          "Parallel adds should all be found afterward" true res
+      done)
+    domains;
+  ()
+
+let para_removes =
+  Alcotest.test_case "removes" `Quick @@ fun () ->
+  let scores = create () in
+  add "VA-11 HALL-A" 5 scores;
+  let domains =
+    Array.init 8 (fun _ ->
+        Domain.spawn (fun () -> remove "VA-11 HALL-A" scores))
+  in
+  let successes =
+    Array.fold_left (fun n d -> if Domain.join d then n + 1 else n) 0 domains
+  in
+  Alcotest.(check int)
+    "After 1 add, parallel removes should all fail except one" 1 successes;
+  ()
+
+let para_add_contention =
+  Alcotest.test_case "adds with contention" `Quick @@ fun () ->
+  let scores = create () in
+  let domains =
+    Array.init 8 (fun i ->
+        Domain.spawn (fun () -> add "Celeste" (13 + i) scores))
+  in
+  Array.iter Domain.join domains;
+  let found = find_opt "Celeste" scores in
+  match found with
+  | None -> Alcotest.fail "Added value should be found even with contention"
+  | Some k ->
+      Alcotest.(check bool)
+        "Added value should be a really possible value" true
+        (k >= 13 && k <= 20);
+      ()
+
+let parallel =
+  [ para_add_mem; para_add_then_mem; para_removes; para_add_contention ]
+
 let () =
-  Alcotest.run "Sequential operations"
-    [ ("Basic operations", basics); ("Collisions", collisions) ]
+  Alcotest.run "Everything"
+    [
+      ("Basic operations", basics);
+      ("Sequential collisions", collisions);
+      ("Hand-made parallel cases", parallel);
+    ]
