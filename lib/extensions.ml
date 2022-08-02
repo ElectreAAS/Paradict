@@ -37,7 +37,7 @@ end
 
 (** Ugly but there's nothing in the stdlib... *)
 let hex_to_binary s =
-  let aux = function
+  let convert = function
     | '0' -> "0000"
     | '1' -> "0001"
     | '2' -> "0010"
@@ -58,4 +58,4 @@ let hex_to_binary s =
         raise
         @@ Invalid_argument ("Invalid hexadecimal character: " ^ Char.escaped c)
   in
-  String.fold_left (fun bin c -> bin ^ aux c) "" s
+  String.fold_left (fun bin c -> bin ^ convert c) "" s
