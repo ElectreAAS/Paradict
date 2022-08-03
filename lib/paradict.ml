@@ -21,22 +21,26 @@ module type T = sig
 end
 
 module Make (H : Hashable) = struct
-  type key = H.t
+  module Types = struct
+    type key = H.t
 
-  type 'a t = { root : 'a iNode }
-  and 'a iNode = { main : 'a mainNode Atomic.t }
+    type 'a t = { root : 'a iNode }
+    and 'a iNode = { main : 'a mainNode Atomic.t }
 
-  and 'a mainNode =
-    | CNode of 'a cNode
-    | TNode of 'a tNode
-    | LNode of 'a leaf list
+    and 'a mainNode =
+      | CNode of 'a cNode
+      | TNode of 'a tNode
+      | LNode of 'a leaf list
 
-  and 'a cNode = { bmp : Int32.t; array : 'a branch array }
-  and 'a tNode = { leaf : 'a leaf }
-  and 'a branch = INode of 'a iNode | Leaf of 'a leaf
-  and 'a leaf = { key : key; value : 'a }
+    and 'a cNode = { bmp : Int32.t; array : 'a branch array }
+    and 'a tNode = { leaf : 'a leaf }
+    and 'a branch = INode of 'a iNode | Leaf of 'a leaf
+    and 'a leaf = { key : key; value : 'a }
 
-  exception Recur
+    exception Recur
+  end
+
+  include Types
 
   let value_opt key leaf =
     if H.compare key leaf.key = 0 then Some leaf.value else None
