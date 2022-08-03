@@ -11,9 +11,7 @@
 
 (maintainers "Ambre Austen Suhamy")
 
-(license LICENSE)
-
-(documentation https://url/to/documentation)
+(license GPL-3.0-only)
 
 (package
  (name paradict)
