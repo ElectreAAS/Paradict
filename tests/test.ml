@@ -63,7 +63,25 @@ let collision_mem =
   done;
   ()
 
-let collisions = [ collision_mem ]
+let depth_full_empty =
+  Alcotest.test_case "depth after full remove" `Quick @@ fun () ->
+  let numbers = create () in
+  for i = 0 to 32 do
+    add (string_of_int i) i numbers
+  done;
+  for i = 0 to 32 do
+    let removed = remove (string_of_int i) numbers in
+    Alcotest.(check bool)
+      (string_of_int i ^ " should be correctly removed")
+      true removed
+  done;
+  Alcotest.(check int)
+    "After a full removal, depth should be 1" 1 (depth numbers);
+  Alcotest.(check bool)
+    "After a full removal, root should be empty" true (is_empty numbers);
+  ()
+
+let depth = [ collision_mem; depth_full_empty ]
 
 let para_add_mem =
   let add_bunch map i =
@@ -148,6 +166,6 @@ let () =
   Alcotest.run "Everything"
     [
       ("Basic operations", basics);
-      ("Sequential collisions", collisions);
+      ("Sequential collisions", depth);
       ("Hand-made parallel cases", parallel);
     ]
