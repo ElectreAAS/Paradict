@@ -23,6 +23,7 @@
   ocaml_intrinsics
   digestif
   (kcas (= dev))
+  (mtime :with-test)
   (alcotest :with-test))
  (tags
   (topics "to describe" your project)))
