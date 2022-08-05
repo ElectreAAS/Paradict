@@ -1,4 +1,5 @@
 let nb = try int_of_string Sys.argv.(1) with _ -> 100_000
+let max_domains = try int_of_string Sys.argv.(2) with _ -> 8
 
 module P = Paradict.Make (struct
   type t = int
@@ -16,44 +17,61 @@ let bench name metric f =
     name metric elapsed;
   result
 
-let t =
-  bench "single" "add" @@ fun () ->
-  let t = P.create () in
-  for i = 1 to nb do
-    P.add i i t
-  done;
-  assert (P.size t = nb);
-  t
+module T = Domainslib.Task
+
+module Test (Config : sig
+  val name : string
+  val pool : T.pool
+end) =
+struct
+  let bench metric f = bench "multicore" (metric ^ "/" ^ Config.name) f
+  let iter start finish body = T.parallel_for Config.pool ~start ~finish ~body
+
+  let t =
+    bench "add" @@ fun () ->
+    let t = P.create () in
+    iter 1 nb (fun i -> P.add i i t);
+    assert (P.size t = nb);
+    t
+
+  let () = bench "mem" @@ fun () -> iter 1 nb (fun i -> assert (P.mem i t))
+
+  let () =
+    bench "find_opt: Some" @@ fun () ->
+    iter 1 nb (fun i ->
+        match P.find_opt i t with
+        | Some j -> assert (i = j)
+        | None -> assert false)
+
+  let () =
+    bench "find_opt: None" @@ fun () ->
+    iter (nb + 1) (2 * nb) (fun i ->
+        match P.find_opt i t with Some _ -> assert false | None -> ())
+
+  let () =
+    bench "remove: inexistant" @@ fun () ->
+    iter (nb + 1) (2 * nb) (fun i -> assert (not (P.remove i t)));
+    assert (P.size t = nb)
+
+  let () =
+    bench "remove: all" @@ fun () ->
+    iter 1 nb (fun i -> assert (P.remove i t));
+    assert (P.size t = 0);
+    assert (P.is_empty t)
+end
+
+let run domains =
+  let module Config = struct
+    let name = string_of_int domains
+    let pool = T.setup_pool ~num_additional_domains:(domains - 1) ()
+  end in
+  T.run Config.pool (fun () ->
+      let module Run = Test (Config) in
+      ());
+  T.teardown_pool Config.pool
 
 let () =
-  bench "single" "mem" @@ fun () ->
-  for i = 1 to nb do
-    assert (P.mem i t)
+  for domains = 1 to max_domains do
+    Format.printf "@.Benchmark with %i domains:@." domains;
+    run domains
   done
-
-let () =
-  bench "single" "find_opt: Some" @@ fun () ->
-  for i = 1 to nb do
-    match P.find_opt i t with Some j -> assert (i = j) | None -> assert false
-  done
-
-let () =
-  bench "single" "find_opt: None" @@ fun () ->
-  for i = nb + 1 to 2 * nb do
-    match P.find_opt i t with Some _ -> assert false | None -> ()
-  done
-
-let () =
-  bench "single" "remove: inexistant" @@ fun () ->
-  for i = nb + 1 to 2 * nb do
-    assert (not (P.remove i t))
-  done;
-  assert (P.size t = nb)
-
-let () =
-  bench "single" "remove: all" @@ fun () ->
-  for i = 1 to nb do
-    assert (P.remove i t)
-  done;
-  assert (P.size t = 0);
-  assert (P.is_empty t)
