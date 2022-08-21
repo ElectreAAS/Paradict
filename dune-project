@@ -22,6 +22,7 @@
   dune
   ocaml_intrinsics
   digestif
+  kcas
   (alcotest :with-test))
  (tags
   (topics "to describe" your project)))
