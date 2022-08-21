@@ -18,6 +18,7 @@ module type T = sig
   val print : 'a t -> unit
   val depth : 'a t -> int
   val size : 'a t -> int
+  val snapshot : 'a t -> 'a t
 end
 
 module Make : functor (H : Hashable) -> T with type key = H.t

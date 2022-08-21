@@ -20,6 +20,7 @@ module type T = sig
   val print : 'a t -> unit
   val depth : 'a t -> int
   val size : 'a t -> int
+  val snapshot : 'a t -> 'a t
 end
 
 module Make (H : Hashable) = struct
@@ -352,4 +353,15 @@ module Make (H : Hashable) = struct
           changed && (gen_dcss i ln (LNode new_list) startgen || raise Recur)
     in
     try aux t.root key 0 None (Kcas.get t.root.gen) with Recur -> remove key t
+
+  let rec snapshot t =
+    let main = Kcas.get t.root.main in
+    let atomic_read = Kcas.mk_cas t.root.main main main in
+    (* The old root is updated to a new generation *)
+    let cas = Kcas.mk_cas t.root.gen (Kcas.get t.root.gen) (object end) in
+    if Kcas.kCAS [ cas; atomic_read ] then
+      (* We can return a new root with a second new generation *)
+      (* TODO: investigate why 2 new generations *)
+      { root = { main = Kcas.ref main; gen = Kcas.ref (object end) } }
+    else snapshot t
 end
