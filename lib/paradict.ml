@@ -92,23 +92,24 @@ module Make (H : Hashable) = struct
     in
     let pr_leaf_info leaf =
       Printf.fprintf oc
-        "\tV%d [shape=Mrecord label=\"<key> %s|<val> %s\" color=blue];\n" !iv
-        (print_key leaf.key) (print_val leaf.value)
+        "\tV%d [shape=Mrecord label=\"<key> %s|<val> %s\" style=filled \
+         color=gold];\n"
+        !iv (print_key leaf.key) (print_val leaf.value)
     in
     let rec pr_inode inode =
       let self = !ii in
       ii := !ii + 1;
-      Printf.fprintf oc "\tI%d [color=green];\n" self;
+      Printf.fprintf oc "\tI%d [style=filled shape=box color=green2];\n" self;
       match Kcas.get inode.main with
       | CNode cnode ->
           pr_cnode_info cnode;
-          Printf.fprintf oc "\tI%d -> C%d [color=green];\n" self !ic;
+          Printf.fprintf oc "\tI%d -> C%d:bmp;\n" self !ic;
           pr_cnode cnode
       | TNode leaf ->
-          Printf.fprintf oc "\tI%d -> T%d [color=green];\n" self !it;
+          Printf.fprintf oc "\tI%d -> T%d;\n" self !it;
           pr_tnode leaf
       | LNode list ->
-          Printf.fprintf oc "\tI%d -> L%d [color=green];\n" self !il;
+          Printf.fprintf oc "\tI%d -> L%d;\n" self !il;
           pr_list list
     and pr_cnode cnode =
       let self = !ic in
@@ -126,6 +127,7 @@ module Make (H : Hashable) = struct
         cnode.array
     and pr_tnode leaf =
       pr_leaf_info leaf;
+      Printf.fprintf oc "\tT%d [shape=box style=box color=black];\n" !it;
       Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
       iv := !iv + 1;
       it := !it + 1
@@ -133,7 +135,7 @@ module Make (H : Hashable) = struct
       List.iter
         (fun l ->
           pr_leaf_info l;
-          Printf.fprintf oc "\tL%d -> V%d [color=red];\n" !il !iv;
+          Printf.fprintf oc "\tL%d -> V%d [color=red style=bold];\n" !il !iv;
           iv := !iv + 1)
         list;
       il := !il + 1
