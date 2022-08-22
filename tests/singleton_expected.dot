@@ -1,0 +1,9 @@
+digraph {
+	root [shape=plaintext];
+	root -> I0 [style=dotted];
+	I0 [color=green];
+	C0 [shape=record label="<bmp> 8192|<i0> ·"];
+	I0 -> C0 [color=green];
+	V0 [shape=Mrecord label="<key> Subnautica|<val> 3" color=blue];
+	C0:i0 -> V0;
+}

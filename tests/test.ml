@@ -162,10 +162,62 @@ let para_add_contention =
 let parallel =
   [ para_add_mem; para_add_then_mem; para_removes; para_add_contention ]
 
+let print_single =
+  Alcotest.test_case "print singleton trie" `Quick @@ fun () ->
+  let scores = create () in
+  add "Subnautica" 3 scores;
+  print (fun x -> x) string_of_int scores "singleton.dot";
+  let gotten_ic = open_in "singleton.dot" in
+  let expect_ic = open_in "../../../tests/singleton_expected.dot" in
+  let eof = ref true in
+  while !eof do
+    try
+      let gotten_line = input_line gotten_ic in
+      let expect_line = input_line expect_ic in
+      Alcotest.(check string)
+        "Lines should match expected file" expect_line gotten_line
+    with End_of_file -> eof := false
+  done;
+  close_in gotten_ic;
+  close_in expect_ic
+
+let print_12 =
+  Alcotest.test_case "print size 12 trie" `Quick @@ fun () ->
+  let scores = create () in
+  add "Warband" 3 scores;
+  add "Mount & Blade" 4 scores;
+  add "Skyrim" 11 scores;
+  add "Devil May Cry" 0 scores;
+  add "Rocket League" 6 scores;
+  add "Luigi's Mansion" 14 scores;
+  add "Unreal Tournament" 8 scores;
+  add "Xenoblade" 16 scores;
+  add "Mario Kart DS" 17 scores;
+  add "Hollow Knight" 20 scores;
+  add "Cult of the Lamb" 800 scores;
+  add "Hellblade" 20 scores;
+  print (fun x -> x) string_of_int scores "size12.dot";
+  let gotten_ic = open_in "size12.dot" in
+  let expect_ic = open_in "../../../tests/size12_expected.dot" in
+  let eof = ref true in
+  while !eof do
+    try
+      let gotten_line = input_line gotten_ic in
+      let expect_line = input_line expect_ic in
+      Alcotest.(check string)
+        "Lines should match expected file" expect_line gotten_line
+    with End_of_file -> eof := false
+  done;
+  close_in gotten_ic;
+  close_in expect_ic
+
+let prints = [ print_single; print_12 ]
+
 let () =
   Alcotest.run "Everything"
     [
       ("Basic operations", basics);
       ("Sequential collisions", depth);
       ("Hand-made parallel cases", parallel);
+      ("Print operation", prints);
     ]

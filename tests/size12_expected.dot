@@ -1,0 +1,35 @@
+digraph {
+	root [shape=plaintext];
+	root -> I0 [style=dotted];
+	I0 [color=green];
+	C0 [shape=record label="<bmp> 3880812580|<i0> ·|<i1> ·|<i2> ·|<i3> ·|<i4> ·|<i5> ·|<i6> ·|<i7> ·|<i8> ·|<i9> ·|<i10> ·"];
+	I0 -> C0 [color=green];
+	V0 [shape=Mrecord label="<key> Warband|<val> 3" color=blue];
+	C0:i0 -> V0;
+	C0:i1 -> I1;
+	I1 [color=green];
+	C1 [shape=record label="<bmp> 384|<i0> ·|<i1> ·"];
+	I1 -> C1 [color=green];
+	V1 [shape=Mrecord label="<key> Luigi's Mansion|<val> 14" color=blue];
+	C1:i0 -> V1;
+	V2 [shape=Mrecord label="<key> Devil May Cry|<val> 0" color=blue];
+	C1:i1 -> V2;
+	V3 [shape=Mrecord label="<key> Unreal Tournament|<val> 8" color=blue];
+	C0:i2 -> V3;
+	V4 [shape=Mrecord label="<key> Rocket League|<val> 6" color=blue];
+	C0:i3 -> V4;
+	V5 [shape=Mrecord label="<key> Xenoblade|<val> 16" color=blue];
+	C0:i4 -> V5;
+	V6 [shape=Mrecord label="<key> Hollow Knight|<val> 20" color=blue];
+	C0:i5 -> V6;
+	V7 [shape=Mrecord label="<key> Mount & Blade|<val> 4" color=blue];
+	C0:i6 -> V7;
+	V8 [shape=Mrecord label="<key> Hellblade|<val> 20" color=blue];
+	C0:i7 -> V8;
+	V9 [shape=Mrecord label="<key> Cult of the Lamb|<val> 800" color=blue];
+	C0:i8 -> V9;
+	V10 [shape=Mrecord label="<key> Skyrim|<val> 11" color=blue];
+	C0:i9 -> V10;
+	V11 [shape=Mrecord label="<key> Mario Kart DS|<val> 17" color=blue];
+	C0:i10 -> V11;
+}
