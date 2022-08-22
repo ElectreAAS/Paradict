@@ -15,6 +15,7 @@ depends: [
   "digestif"
   "kcas"
   "alcotest" {with-test}
+  "bisect_ppx" {with-test}
   "odoc" {with-doc}
 ]
 build: [
