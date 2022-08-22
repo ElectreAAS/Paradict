@@ -15,9 +15,10 @@ module type T = sig
   val is_empty : 'a t -> bool
   val mem : key -> 'a t -> bool
   val add : key -> 'a -> 'a t -> unit
+  val find : key -> 'a t -> 'a
   val find_opt : key -> 'a t -> 'a option
   val remove : key -> 'a t -> bool
-  val print : 'a t -> unit
+  val print : (key -> string) -> ('a -> string) -> 'a t -> string -> unit
   val depth : 'a t -> int
   val size : 'a t -> int
   val snapshot : 'a t -> 'a t
@@ -29,9 +30,6 @@ module Make (H : Hashable) = struct
 
     type 'a t = { root : 'a iNode }
     and gen = < >
-
-    (* The gen field in INodes is only a Kcas.ref so that it can be compared atomically,
-       but it is actually treated as immutable. *)
     and 'a iNode = { main : 'a mainNode Kcas.ref; gen : gen Kcas.ref }
 
     and 'a mainNode =
@@ -58,9 +56,6 @@ module Make (H : Hashable) = struct
 
   include Operations
 
-  let value_opt key leaf =
-    if H.compare key leaf.key = 0 then Some leaf.value else None
-
   let create () =
     {
       root =
@@ -74,20 +69,78 @@ module Make (H : Hashable) = struct
   let is_empty t =
     match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l | _ -> false
 
-  (** NOT ATOMIC. FOR DEBUGGING PURPOSES ONLY *)
-  let print t =
-    let print_cnode fmt cnode =
-      Format.fprintf fmt "{CNode: %s, array length %d}\n%!"
-        (Int32.to_string cnode.bmp)
-        (Array.length cnode.array)
+  (** Print a given tree to a filename, in .dot format.
+    * Use `dot -Tsvg <filename> >output.svg` to see it!
+    *)
+  let print print_key print_val t filename =
+    let oc = open_out filename in
+    let ic = ref 0 in
+    let il = ref 0 in
+    let ii = ref 0 in
+    let it = ref 0 in
+    let iv = ref 0 in
+    Printf.fprintf oc
+      "digraph {\n\troot [shape=plaintext];\n\troot -> I0 [style=dotted];\n";
+    let pr_cnode_info cnode =
+      let size = Int32.unsigned_to_int cnode.bmp in
+      let bmp = match size with Some n -> string_of_int n | None -> "..." in
+      Printf.fprintf oc "\tC%d [shape=record label=\"<bmp> %s" !ic bmp;
+      for i = 0 to Ocaml_intrinsics.Int32.count_set_bits cnode.bmp - 1 do
+        Printf.fprintf oc "|<i%d> ·" i
+      done;
+      Printf.fprintf oc "\"];\n"
     in
-    let print_other fmt = Format.fprintf fmt "non cnode here??\n%!" in
-    let printer fmt t =
-      match Kcas.get t.root.main with
-      | CNode x -> print_cnode fmt x
-      | _ -> print_other fmt
+    let pr_leaf_info leaf =
+      Printf.fprintf oc
+        "\tV%d [shape=Mrecord label=\"<key> %s|<val> %s\" color=blue];\n" !iv
+        (print_key leaf.key) (print_val leaf.value)
     in
-    Format.fprintf Format.std_formatter "%a" printer t
+    let rec pr_inode inode =
+      let self = !ii in
+      ii := !ii + 1;
+      Printf.fprintf oc "\tI%d [color=green];\n" self;
+      match Kcas.get inode.main with
+      | CNode cnode ->
+          pr_cnode_info cnode;
+          Printf.fprintf oc "\tI%d -> C%d [color=green];\n" self !ic;
+          pr_cnode cnode
+      | TNode leaf ->
+          Printf.fprintf oc "\tI%d -> T%d [color=green];\n" self !it;
+          pr_tnode leaf
+      | LNode list ->
+          Printf.fprintf oc "\tI%d -> L%d [color=green];\n" self !il;
+          pr_list list
+    and pr_cnode cnode =
+      let self = !ic in
+      ic := self + 1;
+      Array.iteri
+        (fun i b ->
+          match b with
+          | INode inner ->
+              Printf.fprintf oc "\tC%d:i%d -> I%d;\n" self i !ii;
+              pr_inode inner
+          | Leaf leaf ->
+              pr_leaf_info leaf;
+              Printf.fprintf oc "\tC%d:i%d -> V%d;\n" self i !iv;
+              iv := !iv + 1)
+        cnode.array
+    and pr_tnode leaf =
+      pr_leaf_info leaf;
+      Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
+      iv := !iv + 1;
+      it := !it + 1
+    and pr_list list =
+      List.iter
+        (fun l ->
+          pr_leaf_info l;
+          Printf.fprintf oc "\tL%d -> V%d [color=red];\n" !il !iv;
+          iv := !iv + 1)
+        list;
+      il := !il + 1
+    in
+    pr_inode t.root;
+    Printf.fprintf oc "}\n%!";
+    close_out oc
 
   (** The depth of a tree is the number of INodes.
       It is only correct in sequential contexts. *)
@@ -103,6 +156,7 @@ module Make (H : Hashable) = struct
     in
     aux t.root
 
+  (** Only correct in sequential contexts. *)
   let size t =
     let rec aux i =
       match Kcas.get i.main with
@@ -192,12 +246,12 @@ module Make (H : Hashable) = struct
     in
     gen_dcss parent (CNode cnode) (CNode new_cnode) new_gen
 
-  let rec find_opt key t =
+  let rec find key t =
     let rec aux i key lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode -> (
           let flag, pos = flagpos key lvl cnode.bmp in
-          if Int32.logand cnode.bmp flag = 0l then None
+          if Int32.logand cnode.bmp flag = 0l then raise Not_found
           else
             match cnode.array.(pos) with
             | INode inner ->
@@ -206,15 +260,19 @@ module Make (H : Hashable) = struct
                 else if regenerate i cnode pos (Kcas.get inner.main) startgen
                 then aux i key lvl parent startgen
                 else raise Recur
-            | Leaf leaf -> value_opt key leaf)
-      | LNode lst -> List.find_map (value_opt key) lst
+            | Leaf leaf ->
+                if H.compare leaf.key key = 0 then leaf.value
+                else raise Not_found)
+      | LNode lst ->
+          let leaf = List.find (fun l -> H.compare l.key key = 0) lst in
+          leaf.value
       | TNode _ ->
           clean parent (lvl - 5) startgen;
           raise Recur
     in
-    try aux t.root key 0 None (Kcas.get t.root.gen)
-    with Recur -> find_opt key t
+    try aux t.root key 0 None (Kcas.get t.root.gen) with Recur -> find key t
 
+  let find_opt key t = try Some (find key t) with Not_found -> None
   let mem key t = Option.is_some (find_opt key t)
 
   let rec branch_of_pair l1 l2 lvl gen =
