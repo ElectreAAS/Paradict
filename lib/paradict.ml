@@ -241,17 +241,20 @@ module Make (H : Hashable) = struct
   (** Update the generation of the immediate child cnode.array.(pos) of parent to new_gen.
       We volontarily do not update the generations of deeper INodes, as this is a lazy algorithm.
       TODO: investigate if this is really wise. *)
-  let regenerate parent cnode pos mainnode new_gen =
+  let regenerate parent cn pos child_main new_gen =
+    match cn with
+    | CNode cnode ->
     let new_cnode =
       updated cnode pos
-        (INode { main = Kcas.ref mainnode; gen = Kcas.ref new_gen })
+            (INode { main = Kcas.ref child_main; gen = Kcas.ref new_gen })
     in
-    gen_dcss parent (CNode cnode) (CNode new_cnode) new_gen
+        gen_dcss parent cn (CNode new_cnode) new_gen
+    | _ -> true
 
   let rec find key t =
     let rec aux i key lvl parent startgen =
       match Kcas.get i.main with
-      | CNode cnode -> (
+      | CNode cnode as cn -> (
           let flag, pos = flagpos key lvl cnode.bmp in
           if Int32.logand cnode.bmp flag = 0l then raise Not_found
           else
@@ -259,8 +262,8 @@ module Make (H : Hashable) = struct
             | INode inner ->
                 if Kcas.get inner.gen = startgen then
                   aux inner key (lvl + 5) (Some i) startgen
-                else if regenerate i cnode pos (Kcas.get inner.main) startgen
-                then aux i key lvl parent startgen
+                else if regenerate i cn pos (Kcas.get inner.main) startgen then
+                  aux i key lvl parent startgen
                 else raise Recur
             | Leaf leaf ->
                 if H.compare leaf.key key = 0 then leaf.value
@@ -324,8 +327,8 @@ module Make (H : Hashable) = struct
             | INode inner ->
                 if Kcas.get inner.gen = startgen then
                   aux inner key value (lvl + 5) (Some i) startgen
-                else if regenerate i cnode pos (Kcas.get inner.main) startgen
-                then aux i key value lvl parent startgen
+                else if regenerate i cn pos (Kcas.get inner.main) startgen then
+                  aux i key value lvl parent startgen
                 else raise Recur
             | Leaf l ->
                 if H.compare l.key key = 0 then (
@@ -386,7 +389,7 @@ module Make (H : Hashable) = struct
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
                     aux inner key (lvl + 5) (Some i) startgen
-                  else if regenerate i cnode pos (Kcas.get inner.main) startgen
+                  else if regenerate i cn pos (Kcas.get inner.main) startgen
                   then aux i key lvl parent startgen
                   else raise Recur
               | Leaf l ->
