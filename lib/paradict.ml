@@ -38,10 +38,6 @@ module Make (H : Hashable) = struct
         };
     }
 
-  (** The maximum value for the [lvl] variable.
-      This makes the maximum real depth to be 52 (unreachable in practice). *)
-  let max_lvl = 256
-
   (** This is the only function that actually hashes keys.
       We try to use it as infrequently as possible. *)
   let hash_to_binary key =
@@ -51,9 +47,13 @@ module Make (H : Hashable) = struct
   (* We only use 5 bits of the hashcode, depending on the level in the tree.
      Note that [lvl] is always a multiple of 5. (5 = log2 32) *)
   let hash_to_flag lvl hashcode =
-    let relevant = String.sub hashcode (String.length hashcode - lvl - 5) 5 in
-    let to_shift = int_of_string ("0b" ^ relevant) in
-    Int32.shift_left 1l to_shift
+    try
+      let relevant = String.sub hashcode lvl 5 in
+      let to_shift = int_of_string ("0b" ^ relevant) in
+      Int32.shift_left 1l to_shift
+    with Invalid_argument _ ->
+      (* Invalid argument means the lvl is too high for String.sub. *)
+      Int32.zero
 
   (** [flag] is a single bit flag (never 0)
 
@@ -157,12 +157,12 @@ module Make (H : Hashable) = struct
     let flag1 = hash_to_flag lvl h1 in
     let flag2 = hash_to_flag lvl h2 in
     let bmp = Int32.logor flag1 flag2 in
-    match Int32.unsigned_compare flag1 flag2 with
-    | 0 ->
-        if lvl > max_lvl then
-          (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
-          INode { main = Kcas.ref @@ LNode [ l1; l2 ]; gen = Kcas.ref gen }
-        else
+    if bmp = 0l then
+      (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
+      INode { main = Kcas.ref @@ LNode [ l1; l2 ]; gen = Kcas.ref gen }
+    else
+      match Int32.unsigned_compare flag1 flag2 with
+      | 0 ->
           (* Collision on this level, we need to go deeper *)
           INode
             {
@@ -176,18 +176,18 @@ module Make (H : Hashable) = struct
                      };
               gen = Kcas.ref gen;
             }
-    | 1 ->
-        INode
-          {
-            main = Kcas.ref @@ CNode { bmp; array = [| Leaf l2; Leaf l1 |] };
-            gen = Kcas.ref gen;
-          }
-    | _ ->
-        INode
-          {
-            main = Kcas.ref @@ CNode { bmp; array = [| Leaf l1; Leaf l2 |] };
-            gen = Kcas.ref gen;
-          }
+      | 1 ->
+          INode
+            {
+              main = Kcas.ref @@ CNode { bmp; array = [| Leaf l2; Leaf l1 |] };
+              gen = Kcas.ref gen;
+            }
+      | _ ->
+          INode
+            {
+              main = Kcas.ref @@ CNode { bmp; array = [| Leaf l1; Leaf l2 |] };
+              gen = Kcas.ref gen;
+            }
 
   let rec clean_parent parent t hashcode lvl startgen =
     if Kcas.get t.gen <> startgen then ()
