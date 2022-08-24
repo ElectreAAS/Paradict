@@ -23,11 +23,11 @@ module Make (H : Hashable) = struct
 
   include Types
 
-    (** Generational Double Compare Single Swap *)
-    let gen_dcss inode old_m new_m gen =
-      let cas = Kcas.mk_cas inode.main old_m new_m in
-      let atomic_read = Kcas.mk_cas inode.gen gen gen in
-      Kcas.kCAS [ cas; atomic_read ]
+  (** Generational Double Compare Single Swap *)
+  let gen_dcss inode old_m new_m gen =
+    let cas = Kcas.mk_cas inode.main old_m new_m in
+    let atomic_read = Kcas.mk_cas inode.gen gen gen in
+    Kcas.kCAS [ cas; atomic_read ]
 
   let create () =
     {
@@ -224,9 +224,9 @@ module Make (H : Hashable) = struct
         gen_dcss parent cn (CNode new_cnode) new_gen
     | _ -> true
 
-  let rec find key t =
+  let find key t =
     let hashcode = hash_to_binary key in
-    let rec aux i key lvl parent startgen =
+    let rec aux i lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode as cn -> (
           let flag, pos = flagpos lvl cnode.bmp hashcode in
@@ -235,9 +235,9 @@ module Make (H : Hashable) = struct
             match cnode.array.(pos) with
             | INode inner ->
                 if Kcas.get inner.gen = startgen then
-                  aux inner key (lvl + 5) (Some i) startgen
+                  aux inner (lvl + 5) (Some i) startgen
                 else if regenerate i cn pos (Kcas.get inner.main) startgen then
-                  aux i key lvl parent startgen
+                  aux i lvl parent startgen
                 else raise Recur
             | Leaf leaf ->
                 if H.compare leaf.key key = 0 then leaf.value
@@ -249,14 +249,17 @@ module Make (H : Hashable) = struct
           clean parent (lvl - 5) startgen;
           raise Recur
     in
-    try aux t.root key 0 None (Kcas.get t.root.gen) with Recur -> find key t
+    let rec loop () =
+      try aux t.root 0 None (Kcas.get t.root.gen) with Recur -> loop ()
+    in
+    loop ()
 
   let find_opt key t = try Some (find key t) with Not_found -> None
   let mem key t = Option.is_some (find_opt key t)
 
-  let rec branch_of_pair l1 l2 lvl gen =
-    let flag1 = hash_to_binary l1.key |> hash_to_flag lvl in
-    let flag2 = hash_to_binary l2.key |> hash_to_flag lvl in
+  let rec branch_of_pair (l1, h1) (l2, h2) lvl gen =
+    let flag1 = hash_to_flag lvl h2 in
+    let flag2 = hash_to_flag lvl h2 in
     let bmp = Int32.logor flag1 flag2 in
     match Int32.unsigned_compare flag1 flag2 with
     | 0 ->
@@ -270,7 +273,11 @@ module Make (H : Hashable) = struct
               main =
                 Kcas.ref
                 @@ CNode
-                     { bmp; array = [| branch_of_pair l1 l2 (lvl + 5) gen |] };
+                     {
+                       bmp;
+                       array =
+                         [| branch_of_pair (l1, h1) (l2, h2) (lvl + 5) gen |];
+                     };
               gen = Kcas.ref gen;
             }
     | 1 ->
@@ -286,9 +293,9 @@ module Make (H : Hashable) = struct
             gen = Kcas.ref gen;
           }
 
-  let rec add key value t =
+  let add key value t =
     let hashcode = hash_to_binary key in
-    let rec aux i key value lvl parent startgen =
+    let rec aux i lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode as cn -> (
           let flag, pos = flagpos lvl cnode.bmp hashcode in
@@ -301,9 +308,9 @@ module Make (H : Hashable) = struct
             match cnode.array.(pos) with
             | INode inner ->
                 if Kcas.get inner.gen = startgen then
-                  aux inner key value (lvl + 5) (Some i) startgen
+                  aux inner (lvl + 5) (Some i) startgen
                 else if regenerate i cn pos (Kcas.get inner.main) startgen then
-                  aux i key value lvl parent startgen
+                  aux i lvl parent startgen
                 else raise Recur
             | Leaf l ->
                 if H.compare l.key key = 0 then (
@@ -313,7 +320,10 @@ module Make (H : Hashable) = struct
                     raise Recur)
                 else
                   let new_pair =
-                    branch_of_pair l { key; value } (lvl + 5) startgen
+                    branch_of_pair
+                      (l, hash_to_binary l.key)
+                      ({ key; value }, hashcode)
+                      (lvl + 5) startgen
                   in
                   let new_cnode = updated cnode pos new_pair in
                   if not @@ gen_dcss i cn (CNode new_cnode) startgen then
@@ -325,8 +335,10 @@ module Make (H : Hashable) = struct
           let new_list = LNode ({ key; value } :: lst) in
           if not @@ gen_dcss i ln new_list startgen then raise Recur
     in
-    try aux t.root key value 0 None (Kcas.get t.root.gen)
-    with Recur -> add key value t
+    let rec loop () =
+      try aux t.root 0 None (Kcas.get t.root.gen) with Recur -> loop ()
+    in
+    loop ()
 
   let rec clean_parent parent t hashcode lvl startgen =
     if Kcas.get t.gen <> startgen then ()
@@ -351,9 +363,9 @@ module Make (H : Hashable) = struct
     let array = Array.remove cnode.array pos in
     { bmp; array }
 
-  let rec remove key t =
+  let remove key t =
     let hashcode = hash_to_binary key in
-    let rec aux i key lvl parent startgen =
+    let rec aux i lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode as cn ->
           let flag, pos = flagpos lvl cnode.bmp hashcode in
@@ -363,9 +375,9 @@ module Make (H : Hashable) = struct
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux inner key (lvl + 5) (Some i) startgen
+                    aux inner (lvl + 5) (Some i) startgen
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
-                  then aux i key lvl parent startgen
+                  then aux i lvl parent startgen
                   else raise Recur
               | Leaf l ->
                   if H.compare l.key key <> 0 then false
@@ -390,7 +402,10 @@ module Make (H : Hashable) = struct
           in
           changed && (gen_dcss i ln (LNode new_list) startgen || raise Recur)
     in
-    try aux t.root key 0 None (Kcas.get t.root.gen) with Recur -> remove key t
+    let rec loop () =
+      try aux t.root 0 None (Kcas.get t.root.gen) with Recur -> loop ()
+    in
+    loop ()
 
   let rec snapshot t =
     let main = Kcas.get t.root.main in
