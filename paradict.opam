@@ -17,6 +17,7 @@ depends: [
   "domainslib" {with-test}
   "mtime" {with-test}
   "alcotest" {with-test}
+  "bisect_ppx" {with-test}
   "odoc" {with-doc}
 ]
 build: [

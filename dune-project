@@ -25,7 +25,8 @@
   (kcas (= dev))
   (domainslib :with-test)
   (mtime :with-test)
-  (alcotest :with-test))
+  (alcotest :with-test)
+  (bisect_ppx :with-test))
  (tags
   (topics "to describe" your project)))
 

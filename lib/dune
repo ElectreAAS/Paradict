@@ -1,4 +1,6 @@
 (library
  (public_name paradict)
  (name paradict)
- (libraries ocaml_intrinsics digestif kcas))
+ (libraries ocaml_intrinsics digestif kcas)
+ (instrumentation
+  (backend bisect_ppx)))
