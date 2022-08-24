@@ -201,24 +201,24 @@ module Make (H : Hashable) = struct
             ()
         | _ -> ())
 
-  let inserted cnode flag pos leaf =
+  let cnode_with_insert cnode flag pos leaf =
     let new_bitmap = Int32.logor cnode.bmp flag in
     let new_array = Array.insert cnode.array pos (Leaf leaf) in
     { bmp = new_bitmap; array = new_array }
 
-  let updated cnode pos inode =
+  let cnode_with_update cnode pos inode =
     let array = Array.copy cnode.array in
     array.(pos) <- inode;
     { cnode with array }
 
-  (** Update the generation of the immediate child cnode.array.(pos) of parent to new_gen.
+  (** Update the generation of the immediate child [cn.array.(pos)] of [parent] to [new_gen].
       We volontarily do not update the generations of deeper INodes, as this is a lazy algorithm.
       TODO: investigate if this is really wise. *)
   let regenerate parent cn pos child_main new_gen =
     match cn with
     | CNode cnode ->
         let new_cnode =
-          updated cnode pos
+          cnode_with_update cnode pos
             (INode { main = Kcas.ref child_main; gen = Kcas.ref new_gen })
         in
         gen_dcss parent cn (CNode new_cnode) new_gen
@@ -293,53 +293,6 @@ module Make (H : Hashable) = struct
             gen = Kcas.ref gen;
           }
 
-  let add key value t =
-    let hashcode = hash_to_binary key in
-    let rec aux i lvl parent startgen =
-      match Kcas.get i.main with
-      | CNode cnode as cn -> (
-          let flag, pos = flagpos lvl cnode.bmp hashcode in
-          if Int32.logand cnode.bmp flag = 0l then (
-            (* no flag collision means it's a free insertion *)
-            let new_cnode = inserted cnode flag pos { key; value } in
-            if not @@ gen_dcss i cn (CNode new_cnode) startgen then raise Recur)
-          else
-            (* collision, we need to go a level deeper in the tree *)
-            match cnode.array.(pos) with
-            | INode inner ->
-                if Kcas.get inner.gen = startgen then
-                  aux inner (lvl + 5) (Some i) startgen
-                else if regenerate i cn pos (Kcas.get inner.main) startgen then
-                  aux i lvl parent startgen
-                else raise Recur
-            | Leaf l ->
-                if H.compare l.key key = 0 then (
-                  (* No need to go deeper, just to update the new value *)
-                  let new_cnode = updated cnode pos (Leaf { key; value }) in
-                  if not @@ gen_dcss i cn (CNode new_cnode) startgen then
-                    raise Recur)
-                else
-                  let new_pair =
-                    branch_of_pair
-                      (l, hash_to_binary l.key)
-                      ({ key; value }, hashcode)
-                      (lvl + 5) startgen
-                  in
-                  let new_cnode = updated cnode pos new_pair in
-                  if not @@ gen_dcss i cn (CNode new_cnode) startgen then
-                    raise Recur)
-      | TNode _ ->
-          clean parent (lvl - 5) startgen;
-          raise Recur
-      | LNode lst as ln ->
-          let new_list = LNode ({ key; value } :: lst) in
-          if not @@ gen_dcss i ln new_list startgen then raise Recur
-    in
-    let rec loop () =
-      try aux t.root 0 None (Kcas.get t.root.gen) with Recur -> loop ()
-    in
-    loop ()
-
   let rec clean_parent parent t hashcode lvl startgen =
     if Kcas.get t.gen <> startgen then ()
     else
@@ -352,26 +305,37 @@ module Make (H : Hashable) = struct
           then
             match main with
             | TNode _ ->
-                let new_cnode = updated cnode pos (resurrect t) in
+                let new_cnode = cnode_with_update cnode pos (resurrect t) in
                 if not @@ gen_dcss parent cn (contract new_cnode lvl) startgen
                 then clean_parent parent t hashcode lvl startgen
             | _ -> ())
       | _ -> ()
 
-  let removed cnode pos flag =
+  let cnode_with_delete cnode pos flag =
     let bmp = Int32.logand cnode.bmp (Int32.lognot flag) in
     let array = Array.remove cnode.array pos in
     { bmp; array }
 
-  let remove key t =
+  let update key f t =
     let hashcode = hash_to_binary key in
+    (* Boolean return value to signal a mapping was deleted. *)
     let rec aux i lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode as cn ->
           let flag, pos = flagpos lvl cnode.bmp hashcode in
-          if Int32.logand cnode.bmp flag = 0l then false
+          if Int32.logand cnode.bmp flag = 0l then
+            (* No flag collision, the key isn't in the map. *)
+            match f None with
+            | Some value ->
+                (* We need to insert it. *)
+                let new_cnode =
+                  cnode_with_insert cnode flag pos { key; value }
+                in
+                if gen_dcss i cn (CNode new_cnode) startgen then false
+                else raise Recur
+            | None -> false
           else
-            let res =
+            let leaf_removed =
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
@@ -379,20 +343,44 @@ module Make (H : Hashable) = struct
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
                   then aux i lvl parent startgen
                   else raise Recur
-              | Leaf l ->
-                  if H.compare l.key key <> 0 then false
-                  else
-                    let new_cnode = removed cnode pos flag in
+              | Leaf l -> (
+                  if H.compare l.key key = 0 then
+                    match f (Some l.value) with
+                    | Some value ->
+                        (* We found a value to be updated. *)
+                        let new_cnode =
+                          cnode_with_update cnode pos (Leaf { key; value })
+                        in
+                        if gen_dcss i cn (CNode new_cnode) startgen then false
+                        else raise Recur
+                    | None ->
+                        (* We need to remove this value *)
+                        let new_cnode = cnode_with_delete cnode pos flag in
                     let contracted = contract new_cnode lvl in
                     gen_dcss i cn contracted startgen || raise Recur
+                  else
+                    match f None with
+                    | Some value ->
+                        (* We create a new entry colliding with a leaf, so we create a new level. *)
+                        let new_pair =
+                          branch_of_pair
+                            (l, hash_to_binary l.key)
+                            ({ key; value }, hashcode)
+                            (lvl + 5) startgen
             in
-            (if res then
+                        let new_cnode = cnode_with_update cnode pos new_pair in
+                        if gen_dcss i cn (CNode new_cnode) startgen then false
+                        else raise Recur
+                    (* The key isn't in the map. *)
+                    | None -> false)
+            in
+            (if leaf_removed then
              match (Kcas.get i.main, parent) with
              | TNode _, Some parent ->
                  clean_parent parent i hashcode (lvl - 5) startgen
              (* 'parent = None' means i is the root, and the root cannot have a TNode child. *)
              | _ -> ());
-            res
+            leaf_removed
       | TNode _ ->
           clean parent (lvl - 5) startgen;
           raise Recur
@@ -403,9 +391,13 @@ module Make (H : Hashable) = struct
           changed && (gen_dcss i ln (LNode new_list) startgen || raise Recur)
     in
     let rec loop () =
-      try aux t.root 0 None (Kcas.get t.root.gen) with Recur -> loop ()
+      try ignore @@ aux t.root 0 None (Kcas.get t.root.gen)
+      with Recur -> loop ()
     in
     loop ()
+
+  let add key value t = update key (fun _ -> Some value) t
+  let remove key t = update key (fun _ -> None) t
 
   let rec snapshot t =
     let main = Kcas.get t.root.main in
