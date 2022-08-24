@@ -194,11 +194,11 @@ let snap_then_ops =
 
 let snapshots = [ basic_snap; snap_then_ops ]
 
-let print_single =
-  Alcotest.test_case "print singleton trie" `Quick @@ fun () ->
+let save_single =
+  Alcotest.test_case "save singleton trie" `Quick @@ fun () ->
   let scores = create () in
   add "Subnautica" 3 scores;
-  print (fun x -> x) string_of_int scores "singleton.dot";
+  save_as_dot string_of_int scores "singleton.dot";
   let gotten_ic = open_in "singleton.dot" in
   let expect_ic = open_in "../../../tests/singleton_expected.dot" in
   let eof = ref true in
@@ -213,8 +213,8 @@ let print_single =
   close_in gotten_ic;
   close_in expect_ic
 
-let print_12 =
-  Alcotest.test_case "print size 12 trie" `Quick @@ fun () ->
+let save_12 =
+  Alcotest.test_case "save size 12 trie" `Quick @@ fun () ->
   let scores = create () in
   add "Warband" 3 scores;
   add "Mount & Blade" 4 scores;
@@ -228,7 +228,7 @@ let print_12 =
   add "Hollow Knight" 20 scores;
   add "Cult of the Lamb" 800 scores;
   add "Hellblade" 20 scores;
-  print (fun x -> x) string_of_int scores "size12.dot";
+  save_as_dot string_of_int scores "size12.dot";
   let gotten_ic = open_in "size12.dot" in
   let expect_ic = open_in "../../../tests/size12_expected.dot" in
   let eof = ref true in
@@ -243,7 +243,7 @@ let print_12 =
   close_in gotten_ic;
   close_in expect_ic
 
-let prints = [ print_single; print_12 ]
+let savings = [ save_single; save_12 ]
 
 let () =
   Alcotest.run "Everything"
@@ -252,5 +252,5 @@ let () =
       ("Sequential collisions", depth);
       ("Hand-made parallel cases", parallel);
       ("Snapshot interactions", snapshots);
-      ("Print operation", prints);
+      ("Saving to .dot files", savings);
     ]

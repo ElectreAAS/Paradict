@@ -23,15 +23,11 @@ module Make (H : Hashable) = struct
 
   include Types
 
-  module Operations = struct
     (** Generational Double Compare Single Swap *)
     let gen_dcss inode old_m new_m gen =
       let cas = Kcas.mk_cas inode.main old_m new_m in
       let atomic_read = Kcas.mk_cas inode.gen gen gen in
       Kcas.kCAS [ cas; atomic_read ]
-  end
-
-  include Operations
 
   let create () =
     {
@@ -49,7 +45,7 @@ module Make (H : Hashable) = struct
   (** Print a given tree to a filename, in .dot format.
     * Use `dot -Tsvg <filename> >output.svg` to see it!
     *)
-  let print print_key print_val t filename =
+  let save_as_dot string_of_val t filename =
     let oc = open_out filename in
     let ic = ref 0 in
     let il = ref 0 in
@@ -71,7 +67,7 @@ module Make (H : Hashable) = struct
       Printf.fprintf oc
         "\tV%d [shape=Mrecord label=\"<key> %s|<val> %s\" style=filled \
          color=gold];\n"
-        !iv (print_key leaf.key) (print_val leaf.value)
+        !iv (H.to_string leaf.key) (string_of_val leaf.value)
     in
     let rec pr_inode inode =
       let self = !ii in
@@ -205,9 +201,9 @@ module Make (H : Hashable) = struct
             ()
         | _ -> ())
 
-  let inserted cnode flag pos l =
+  let inserted cnode flag pos leaf =
     let new_bitmap = Int32.logor cnode.bmp flag in
-    let new_array = Array.insert cnode.array pos (Leaf l) in
+    let new_array = Array.insert cnode.array pos (Leaf leaf) in
     { bmp = new_bitmap; array = new_array }
 
   let updated cnode pos inode =
