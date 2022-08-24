@@ -154,7 +154,7 @@ module Make (H : Hashable) = struct
   let mem key t = Option.is_some (find_opt key t)
 
   let rec branch_of_pair (l1, h1) (l2, h2) lvl gen =
-    let flag1 = hash_to_flag lvl h2 in
+    let flag1 = hash_to_flag lvl h1 in
     let flag2 = hash_to_flag lvl h2 in
     let bmp = Int32.logor flag1 flag2 in
     match Int32.unsigned_compare flag1 flag2 with
