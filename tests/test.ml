@@ -162,6 +162,38 @@ let para_add_contention =
 let parallel =
   [ para_add_mem; para_add_then_mem; para_removes; para_add_contention ]
 
+let basic_snap =
+  Alcotest.test_case "snapshot" `Quick @@ fun () ->
+  let map = create () in
+  add "Hello" "World" map;
+  let map' = snapshot map in
+  add "Not in" "snap" map;
+  Alcotest.(check (option string))
+    "Snapshot should not eat additions" (Some "World") (find_opt "Hello" map');
+  Alcotest.(check (option string))
+    "Snapshot should not eat additions" None (find_opt "Not in" map');
+  ()
+
+let snap_then_ops =
+  Alcotest.test_case "Snapshot then operations" `Quick @@ fun () ->
+  let map = create () in
+  for i = 0 to 32 do
+    add (string_of_int i) i map
+  done;
+  let map' = snapshot map in
+  for i = 0 to 32 do
+    let stri = string_of_int i in
+    let b = remove stri map in
+    Alcotest.(check bool)
+      "Added value should be removed, even after snapshot" true b;
+    let found = find_opt stri map' in
+    Alcotest.(check (option int))
+      "Added value should still be present in snapshotted version" (Some i)
+      found
+  done
+
+let snapshots = [ basic_snap; snap_then_ops ]
+
 let print_single =
   Alcotest.test_case "print singleton trie" `Quick @@ fun () ->
   let scores = create () in
@@ -219,5 +251,6 @@ let () =
       ("Basic operations", basics);
       ("Sequential collisions", depth);
       ("Hand-made parallel cases", parallel);
+      ("Snapshot interactions", snapshots);
       ("Print operation", prints);
     ]
