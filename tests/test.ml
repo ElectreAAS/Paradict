@@ -29,32 +29,14 @@ let add_find =
     "Added entry should have correct value" (Some 9) res;
   ()
 
-let remove_empty =
-  Alcotest.test_case "remove on empty map" `Quick @@ fun () ->
-  let scores = create () in
-  let removed = remove "Dead Cells" scores in
-  Alcotest.(check bool) "Removing an unknown key should fail" false removed;
-  ()
-
-let add_remove =
-  Alcotest.test_case "add & remove" `Quick @@ fun () ->
-  let scores = create () in
-  add "Portal" 7 scores;
-  let removed = remove "Portal" scores in
-  Alcotest.(check bool) "Removing a known key should succeed" true removed;
-  ()
-
-let basics = [ mem_empty; add_mem; add_find; remove_empty; add_remove ]
+let basics = [ mem_empty; add_mem; add_find ]
 
 let collision_mem =
-  Alcotest.test_case "collision & mem & depth" `Quick @@ fun () ->
+  Alcotest.test_case "collision & mem" `Quick @@ fun () ->
   let numbers = create () in
   for i = 0 to 32 do
     add (string_of_int i) i numbers
   done;
-  Alcotest.(check bool)
-    "After a row has been filled, depth should be at least 2" true
-    (depth numbers >= 2);
   for i = 0 to 32 do
     let found = find_opt (string_of_int i) numbers in
     Alcotest.(check (option int))
@@ -64,19 +46,14 @@ let collision_mem =
   ()
 
 let depth_full_empty =
-  Alcotest.test_case "depth after full remove" `Quick @@ fun () ->
+  Alcotest.test_case "size after full remove" `Quick @@ fun () ->
   let numbers = create () in
   for i = 0 to 32 do
     add (string_of_int i) i numbers
   done;
   for i = 0 to 32 do
-    let removed = remove (string_of_int i) numbers in
-    Alcotest.(check bool)
-      (string_of_int i ^ " should be correctly removed")
-      true removed
+    remove (string_of_int i) numbers
   done;
-  Alcotest.(check int)
-    "After a full removal, depth should be 1" 1 (depth numbers);
   Alcotest.(check bool)
     "After a full removal, root should be empty" true (is_empty numbers);
   ()
@@ -127,21 +104,6 @@ let para_add_then_mem =
     domains;
   ()
 
-let para_removes =
-  Alcotest.test_case "removes" `Quick @@ fun () ->
-  let scores = create () in
-  add "VA-11 HALL-A" 5 scores;
-  let domains =
-    Array.init 8 (fun _ ->
-        Domain.spawn (fun () -> remove "VA-11 HALL-A" scores))
-  in
-  let successes =
-    Array.fold_left (fun n d -> if Domain.join d then n + 1 else n) 0 domains
-  in
-  Alcotest.(check int)
-    "After 1 add, parallel removes should all fail except one" 1 successes;
-  ()
-
 let para_add_contention =
   Alcotest.test_case "adds with contention" `Quick @@ fun () ->
   let scores = create () in
@@ -159,8 +121,7 @@ let para_add_contention =
         (k >= 13 && k <= 20);
       ()
 
-let parallel =
-  [ para_add_mem; para_add_then_mem; para_removes; para_add_contention ]
+let parallel = [ para_add_mem; para_add_then_mem; para_add_contention ]
 
 let basic_snap =
   Alcotest.test_case "snapshot" `Quick @@ fun () ->
@@ -183,9 +144,7 @@ let snap_then_ops =
   let map' = snapshot map in
   for i = 0 to 32 do
     let stri = string_of_int i in
-    let b = remove stri map in
-    Alcotest.(check bool)
-      "Added value should be removed, even after snapshot" true b;
+    remove stri map;
     let found = find_opt stri map' in
     Alcotest.(check (option int))
       "Added value should still be present in snapshotted version" (Some i)
