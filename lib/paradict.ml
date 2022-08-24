@@ -176,21 +176,21 @@ module Make (H : Hashable) = struct
       This makes the maximum real depth to be 52 (unreachable in practice). *)
   let max_lvl = 256
 
+  let hash_to_binary key =
+    let open Digestif.SHA256 in
+    key |> H.to_string |> digest_string |> to_hex |> hex_to_binary
+
   (* We only use 5 bits of the hashcode, depending on the level in the tree.
    * Note that `lvl` is always a multiple of 5. (5 = log2 32) *)
-  let to_flag key lvl =
-    let open Digestif.SHA256 in
-    let hash_str =
-      key |> H.to_string |> digest_string |> to_hex |> hex_to_binary
-    in
-    let relevant = String.sub hash_str (String.length hash_str - lvl - 5) 5 in
+  let hash_to_flag lvl hashcode =
+    let relevant = String.sub hashcode (String.length hashcode - lvl - 5) 5 in
     let to_shift = int_of_string ("0b" ^ relevant) in
     Int32.shift_left 1l to_shift
 
-  (** `bit` is a single bit flag (never 0)
+  (** `flag` is a single bit flag (never 0)
    *  `pos` is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
-  let flagpos key lvl bitmap =
-    let flag = to_flag key lvl in
+  let flagpos lvl bitmap hashcode =
+    let flag = hash_to_flag lvl hashcode in
     let pos =
       Ocaml_intrinsics.Int32.count_set_bits
       @@ Int32.logand (Int32.pred flag) bitmap
@@ -244,18 +244,19 @@ module Make (H : Hashable) = struct
   let regenerate parent cn pos child_main new_gen =
     match cn with
     | CNode cnode ->
-    let new_cnode =
-      updated cnode pos
+        let new_cnode =
+          updated cnode pos
             (INode { main = Kcas.ref child_main; gen = Kcas.ref new_gen })
-    in
+        in
         gen_dcss parent cn (CNode new_cnode) new_gen
     | _ -> true
 
   let rec find key t =
+    let hashcode = hash_to_binary key in
     let rec aux i key lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode as cn -> (
-          let flag, pos = flagpos key lvl cnode.bmp in
+          let flag, pos = flagpos lvl cnode.bmp hashcode in
           if Int32.logand cnode.bmp flag = 0l then raise Not_found
           else
             match cnode.array.(pos) with
@@ -281,8 +282,8 @@ module Make (H : Hashable) = struct
   let mem key t = Option.is_some (find_opt key t)
 
   let rec branch_of_pair l1 l2 lvl gen =
-    let flag1 = to_flag l1.key lvl in
-    let flag2 = to_flag l2.key lvl in
+    let flag1 = hash_to_binary l1.key |> hash_to_flag lvl in
+    let flag2 = hash_to_binary l2.key |> hash_to_flag lvl in
     let bmp = Int32.logor flag1 flag2 in
     match Int32.unsigned_compare flag1 flag2 with
     | 0 ->
@@ -313,10 +314,11 @@ module Make (H : Hashable) = struct
           }
 
   let rec add key value t =
+    let hashcode = hash_to_binary key in
     let rec aux i key value lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode as cn -> (
-          let flag, pos = flagpos key lvl cnode.bmp in
+          let flag, pos = flagpos lvl cnode.bmp hashcode in
           if Int32.logand cnode.bmp flag = 0l then (
             (* no flag collision means it's a free insertion *)
             let new_cnode = inserted cnode flag pos { key; value } in
@@ -350,25 +352,24 @@ module Make (H : Hashable) = struct
           let new_list = LNode ({ key; value } :: lst) in
           if not @@ gen_dcss i ln new_list startgen then raise Recur
     in
-
     try aux t.root key value 0 None (Kcas.get t.root.gen)
     with Recur -> add key value t
 
-  let rec clean_parent parent t key lvl startgen =
+  let rec clean_parent parent t hashcode lvl startgen =
     if Kcas.get t.gen <> startgen then ()
     else
       let main = Kcas.get t.main in
       let p_main = Kcas.get parent.main in
       match p_main with
       | CNode cnode as cn -> (
-          let flag, pos = flagpos key lvl cnode.bmp in
+          let flag, pos = flagpos lvl cnode.bmp hashcode in
           if Int32.logand flag cnode.bmp <> 0l && cnode.array.(pos) = INode t
           then
             match main with
             | TNode _ ->
                 let new_cnode = updated cnode pos (resurrect t) in
                 if not @@ gen_dcss parent cn (contract new_cnode lvl) startgen
-                then clean_parent parent t key lvl startgen
+                then clean_parent parent t hashcode lvl startgen
             | _ -> ())
       | _ -> ()
 
@@ -378,10 +379,11 @@ module Make (H : Hashable) = struct
     { bmp; array }
 
   let rec remove key t =
+    let hashcode = hash_to_binary key in
     let rec aux i key lvl parent startgen =
       match Kcas.get i.main with
       | CNode cnode as cn ->
-          let flag, pos = flagpos key lvl cnode.bmp in
+          let flag, pos = flagpos lvl cnode.bmp hashcode in
           if Int32.logand cnode.bmp flag = 0l then false
           else
             let res =
@@ -402,7 +404,7 @@ module Make (H : Hashable) = struct
             (if res then
              match (Kcas.get i.main, parent) with
              | TNode _, Some parent ->
-                 clean_parent parent i key (lvl - 5) startgen
+                 clean_parent parent i hashcode (lvl - 5) startgen
              (* 'parent = None' means i is the root, and the root cannot have a TNode child. *)
              | _ -> ());
             res
