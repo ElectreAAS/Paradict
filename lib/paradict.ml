@@ -38,130 +38,26 @@ module Make (H : Hashable) = struct
         };
     }
 
-  (** Only correct in sequential contexts. *)
-  let is_empty t =
-    match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l | _ -> false
-
-  (** Print a given tree to a filename, in .dot format.
-    * Use `dot -Tsvg <filename> >output.svg` to see it!
-    *)
-  let save_as_dot string_of_val t filename =
-    let oc = open_out filename in
-    let ic = ref 0 in
-    let il = ref 0 in
-    let ii = ref 0 in
-    let it = ref 0 in
-    let iv = ref 0 in
-    Printf.fprintf oc
-      "digraph {\n\troot [shape=plaintext];\n\troot -> I0 [style=dotted];\n";
-    let pr_cnode_info cnode =
-      let size = Int32.unsigned_to_int cnode.bmp in
-      let bmp = match size with Some n -> string_of_int n | None -> "..." in
-      Printf.fprintf oc "\tC%d [shape=record label=\"<bmp> %s" !ic bmp;
-      for i = 0 to Ocaml_intrinsics.Int32.count_set_bits cnode.bmp - 1 do
-        Printf.fprintf oc "|<i%d> ·" i
-      done;
-      Printf.fprintf oc "\"];\n"
-    in
-    let pr_leaf_info leaf =
-      Printf.fprintf oc
-        "\tV%d [shape=Mrecord label=\"<key> %s|<val> %s\" style=filled \
-         color=gold];\n"
-        !iv (H.to_string leaf.key) (string_of_val leaf.value)
-    in
-    let rec pr_inode inode =
-      let self = !ii in
-      ii := !ii + 1;
-      Printf.fprintf oc "\tI%d [style=filled shape=box color=green2];\n" self;
-      match Kcas.get inode.main with
-      | CNode cnode ->
-          pr_cnode_info cnode;
-          Printf.fprintf oc "\tI%d -> C%d:bmp;\n" self !ic;
-          pr_cnode cnode
-      | TNode leaf ->
-          Printf.fprintf oc "\tI%d -> T%d;\n" self !it;
-          pr_tnode leaf
-      | LNode list ->
-          Printf.fprintf oc "\tI%d -> L%d;\n" self !il;
-          pr_list list
-    and pr_cnode cnode =
-      let self = !ic in
-      ic := self + 1;
-      Array.iteri
-        (fun i b ->
-          match b with
-          | INode inner ->
-              Printf.fprintf oc "\tC%d:i%d -> I%d;\n" self i !ii;
-              pr_inode inner
-          | Leaf leaf ->
-              pr_leaf_info leaf;
-              Printf.fprintf oc "\tC%d:i%d -> V%d;\n" self i !iv;
-              iv := !iv + 1)
-        cnode.array
-    and pr_tnode leaf =
-      pr_leaf_info leaf;
-      Printf.fprintf oc "\tT%d [shape=box style=box color=black];\n" !it;
-      Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
-      iv := !iv + 1;
-      it := !it + 1
-    and pr_list list =
-      List.iter
-        (fun l ->
-          pr_leaf_info l;
-          Printf.fprintf oc "\tL%d -> V%d [color=red style=bold];\n" !il !iv;
-          iv := !iv + 1)
-        list;
-      il := !il + 1
-    in
-    pr_inode t.root;
-    Printf.fprintf oc "}\n%!";
-    close_out oc
-
-  (** The depth of a tree is the number of INodes.
-      It is only correct in sequential contexts. *)
-  let depth t =
-    let rec aux i =
-      match Kcas.get i.main with
-      | CNode cnode ->
-          Array.fold_left
-            (fun acc b ->
-              match b with Leaf _ -> acc | INode i -> max acc (1 + aux i))
-            1 cnode.array
-      | _ -> 1
-    in
-    aux t.root
-
-  (** Only correct in sequential contexts. *)
-  let size t =
-    let rec aux i =
-      match Kcas.get i.main with
-      | CNode cnode ->
-          Array.fold_left
-            (fun acc b ->
-              match b with Leaf _ -> acc + 1 | INode i -> acc + aux i)
-            0 cnode.array
-      | TNode _ -> 1
-      | LNode lst -> List.length lst
-    in
-    aux t.root
-
-  (** The maximum value for the `lvl` variable.
+  (** The maximum value for the [lvl] variable.
       This makes the maximum real depth to be 52 (unreachable in practice). *)
   let max_lvl = 256
 
+  (** This is the only function that actually hashes keys.
+      We try to use it as infrequently as possible. *)
   let hash_to_binary key =
     let open Digestif.SHA256 in
     key |> H.to_string |> digest_string |> to_hex |> hex_to_binary
 
   (* We only use 5 bits of the hashcode, depending on the level in the tree.
-   * Note that `lvl` is always a multiple of 5. (5 = log2 32) *)
+     Note that [lvl] is always a multiple of 5. (5 = log2 32) *)
   let hash_to_flag lvl hashcode =
     let relevant = String.sub hashcode (String.length hashcode - lvl - 5) 5 in
     let to_shift = int_of_string ("0b" ^ relevant) in
     Int32.shift_left 1l to_shift
 
-  (** `flag` is a single bit flag (never 0)
-   *  `pos` is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
+  (** [flag] is a single bit flag (never 0)
+
+      [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
   let flagpos lvl bitmap hashcode =
     let flag = hash_to_flag lvl hashcode in
     let pos =
@@ -356,8 +252,8 @@ module Make (H : Hashable) = struct
                     | None ->
                         (* We need to remove this value *)
                         let new_cnode = cnode_with_delete cnode pos flag in
-                    let contracted = contract new_cnode lvl in
-                    gen_dcss i cn contracted startgen || raise Recur
+                        let contracted = contract new_cnode lvl in
+                        gen_dcss i cn contracted startgen || raise Recur
                   else
                     match f None with
                     | Some value ->
@@ -367,7 +263,7 @@ module Make (H : Hashable) = struct
                             (l, hash_to_binary l.key)
                             ({ key; value }, hashcode)
                             (lvl + 5) startgen
-            in
+                        in
                         let new_cnode = cnode_with_update cnode pos new_pair in
                         if gen_dcss i cn (CNode new_cnode) startgen then false
                         else raise Recur
@@ -409,4 +305,92 @@ module Make (H : Hashable) = struct
       (* TODO: investigate why 2 new generations *)
       { root = { main = Kcas.ref main; gen = Kcas.ref (object end) } }
     else snapshot t
+
+  let is_empty t =
+    match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l | _ -> false
+
+  let size t =
+    let rec aux i =
+      match Kcas.get i.main with
+      | CNode cnode ->
+          Array.fold_left
+            (fun acc b ->
+              match b with Leaf _ -> acc + 1 | INode i -> acc + aux i)
+            0 cnode.array
+      | TNode _ -> 1
+      | LNode lst -> List.length lst
+    in
+    aux t.root
+
+  let save_as_dot string_of_val t filename =
+    let oc = open_out filename in
+    let ic = ref 0 in
+    let il = ref 0 in
+    let ii = ref 0 in
+    let it = ref 0 in
+    let iv = ref 0 in
+    Printf.fprintf oc
+      "digraph {\n\troot [shape=plaintext];\n\troot -> I0 [style=dotted];\n";
+    let pr_cnode_info cnode =
+      let size = Int32.unsigned_to_int cnode.bmp in
+      let bmp = match size with Some n -> string_of_int n | None -> "..." in
+      Printf.fprintf oc "\tC%d [shape=record label=\"<bmp> %s" !ic bmp;
+      for i = 0 to Ocaml_intrinsics.Int32.count_set_bits cnode.bmp - 1 do
+        Printf.fprintf oc "|<i%d> ·" i
+      done;
+      Printf.fprintf oc "\"];\n"
+    in
+    let pr_leaf_info leaf =
+      Printf.fprintf oc
+        "\tV%d [shape=Mrecord label=\"<key> %s|<val> %s\" style=filled \
+         color=gold];\n"
+        !iv (H.to_string leaf.key) (string_of_val leaf.value)
+    in
+    let rec pr_inode inode =
+      let self = !ii in
+      ii := !ii + 1;
+      Printf.fprintf oc "\tI%d [style=filled shape=box color=green2];\n" self;
+      match Kcas.get inode.main with
+      | CNode cnode ->
+          pr_cnode_info cnode;
+          Printf.fprintf oc "\tI%d -> C%d:bmp;\n" self !ic;
+          pr_cnode cnode
+      | TNode leaf ->
+          Printf.fprintf oc "\tI%d -> T%d;\n" self !it;
+          pr_tnode leaf
+      | LNode list ->
+          Printf.fprintf oc "\tI%d -> L%d;\n" self !il;
+          pr_list list
+    and pr_cnode cnode =
+      let self = !ic in
+      ic := self + 1;
+      Array.iteri
+        (fun i b ->
+          match b with
+          | INode inner ->
+              Printf.fprintf oc "\tC%d:i%d -> I%d;\n" self i !ii;
+              pr_inode inner
+          | Leaf leaf ->
+              pr_leaf_info leaf;
+              Printf.fprintf oc "\tC%d:i%d -> V%d;\n" self i !iv;
+              iv := !iv + 1)
+        cnode.array
+    and pr_tnode leaf =
+      pr_leaf_info leaf;
+      Printf.fprintf oc "\tT%d [shape=box style=box color=black];\n" !it;
+      Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
+      iv := !iv + 1;
+      it := !it + 1
+    and pr_list list =
+      List.iter
+        (fun l ->
+          pr_leaf_info l;
+          Printf.fprintf oc "\tL%d -> V%d [color=red style=bold];\n" !il !iv;
+          iv := !iv + 1)
+        list;
+      il := !il + 1
+    in
+    pr_inode t.root;
+    Printf.fprintf oc "}\n%!";
+    close_out oc
 end
