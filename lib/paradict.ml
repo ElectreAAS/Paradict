@@ -6,7 +6,16 @@ module Make (H : Hashable) = struct
     type key = H.t
 
     type 'a t = { root : 'a iNode }
+
     and gen = < >
+    (** The type of generations is an empty object.
+
+        This is a classic OCaml trick to ensure safe (in)equality:
+        With this setup
+        [let x = object end;; let y = object end;; let z = x;;]
+        [x = y] is false but [x = z] is true.
+        This avoids integer overflow and discarded gen objects will be garbage collected. *)
+
     and 'a iNode = { main : 'a mainNode Kcas.ref; gen : gen Kcas.ref }
 
     and 'a mainNode =
@@ -17,8 +26,6 @@ module Make (H : Hashable) = struct
     and 'a cNode = { bmp : Int32.t; array : 'a branch array }
     and 'a branch = INode of 'a iNode | Leaf of 'a leaf
     and 'a leaf = { key : key; value : 'a }
-
-    exception Recur
   end
 
   include Types
@@ -62,14 +69,15 @@ module Make (H : Hashable) = struct
     let flag = hash_to_flag lvl hashcode in
     let pos =
       Ocaml_intrinsics.Int32.count_set_bits
-      @@ Int32.logand (Int32.pred flag) bitmap
+      @@ Int32.logand bitmap (Int32.pred flag)
     in
     (flag, pos)
 
-  let resurrect tombed =
-    match Kcas.get tombed.main with
-    | TNode leaf -> Leaf leaf
-    | _ -> INode tombed
+  let resurrect branch =
+    match branch with
+    | Leaf _ -> branch
+    | INode i -> (
+        match Kcas.get i.main with TNode leaf -> Leaf leaf | _ -> branch)
 
   let contract cnode lvl =
     if lvl > 0 && Array.length cnode.array = 1 then
@@ -77,16 +85,14 @@ module Make (H : Hashable) = struct
     else CNode cnode
 
   let compress cnode lvl =
-    let array =
-      Array.map
-        (function Leaf l -> Leaf l | INode i -> resurrect i)
-        cnode.array
-    in
-    contract { bmp = cnode.bmp; array } lvl
+    let array = Array.map resurrect cnode.array in
+    contract { cnode with array } lvl
 
-  let clean t lvl startgen =
-    match t with
-    | None -> ()
+  let clean parent lvl startgen =
+    match parent with
+    | None ->
+        (* no parent means it's the root, nothing to do as it cannot have a tnode child. *)
+        ()
     | Some t -> (
         match Kcas.get t.main with
         | CNode cnode as cn ->
@@ -102,9 +108,9 @@ module Make (H : Hashable) = struct
     let new_array = Array.insert cnode.array pos (Leaf leaf) in
     { bmp = new_bitmap; array = new_array }
 
-  let cnode_with_update cnode pos inode =
+  let cnode_with_update cnode pos branch =
     let array = Array.copy cnode.array in
-    array.(pos) <- inode;
+    array.(pos) <- branch;
     { cnode with array }
 
   (** Update the generation of the immediate child [cn.array.(pos)] of [parent] to [new_gen].
@@ -122,19 +128,21 @@ module Make (H : Hashable) = struct
 
   let find key t =
     let hashcode = hash_to_binary key in
-    let rec aux i lvl parent startgen =
+    let rec loop () =
+      let startgen = Kcas.get t.root.gen in
+      let rec aux i lvl parent =
       match Kcas.get i.main with
       | CNode cnode as cn -> (
           let flag, pos = flagpos lvl cnode.bmp hashcode in
-          if Int32.logand cnode.bmp flag = 0l then raise Not_found
+            if Int32.logand flag cnode.bmp = 0l then raise Not_found
           else
             match cnode.array.(pos) with
             | INode inner ->
                 if Kcas.get inner.gen = startgen then
-                  aux inner (lvl + 5) (Some i) startgen
-                else if regenerate i cn pos (Kcas.get inner.main) startgen then
-                  aux i lvl parent startgen
-                else raise Recur
+                    aux inner (lvl + 5) (Some i)
+                  else if regenerate i cn pos (Kcas.get inner.main) startgen
+                  then aux i lvl parent
+                  else loop ()
             | Leaf leaf ->
                 if H.compare leaf.key key = 0 then leaf.value
                 else raise Not_found)
@@ -143,10 +151,9 @@ module Make (H : Hashable) = struct
           leaf.value
       | TNode _ ->
           clean parent (lvl - 5) startgen;
-          raise Recur
+            loop ()
     in
-    let rec loop () =
-      try aux t.root 0 None (Kcas.get t.root.gen) with Recur -> loop ()
+      aux t.root 0 None
     in
     loop ()
 
@@ -157,53 +164,40 @@ module Make (H : Hashable) = struct
     let flag1 = hash_to_flag lvl h1 in
     let flag2 = hash_to_flag lvl h2 in
     let bmp = Int32.logor flag1 flag2 in
+    let new_main_node =
     if bmp = 0l then
       (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
-      INode { main = Kcas.ref @@ LNode [ l1; l2 ]; gen = Kcas.ref gen }
+        LNode [ l1; l2 ]
     else
+        let array =
       match Int32.unsigned_compare flag1 flag2 with
       | 0 ->
           (* Collision on this level, we need to go deeper *)
-          INode
-            {
-              main =
-                Kcas.ref
-                @@ CNode
-                     {
-                       bmp;
-                       array =
-                         [| branch_of_pair (l1, h1) (l2, h2) (lvl + 5) gen |];
-                     };
-              gen = Kcas.ref gen;
-            }
-      | 1 ->
-          INode
-            {
-              main = Kcas.ref @@ CNode { bmp; array = [| Leaf l2; Leaf l1 |] };
-              gen = Kcas.ref gen;
-            }
-      | _ ->
-          INode
-            {
-              main = Kcas.ref @@ CNode { bmp; array = [| Leaf l1; Leaf l2 |] };
-              gen = Kcas.ref gen;
-            }
+              [| branch_of_pair (l1, h1) (l2, h2) (lvl + 5) gen |]
+          | 1 -> [| Leaf l2; Leaf l1 |]
+          | _ -> [| Leaf l1; Leaf l2 |]
+        in
+        CNode { bmp; array }
+    in
+    INode { main = Kcas.ref @@ new_main_node; gen = Kcas.ref gen }
 
-  let rec clean_parent parent t hashcode lvl startgen =
-    if Kcas.get t.gen <> startgen then ()
+  let rec clean_parent parent i hashcode lvl startgen =
+    if Kcas.get i.gen <> startgen then ()
     else
-      let main = Kcas.get t.main in
+      let main = Kcas.get i.main in
       let p_main = Kcas.get parent.main in
       match p_main with
       | CNode cnode as cn -> (
           let flag, pos = flagpos lvl cnode.bmp hashcode in
-          if Int32.logand flag cnode.bmp <> 0l && cnode.array.(pos) = INode t
+          if Int32.logand flag cnode.bmp <> 0l && cnode.array.(pos) = INode i
           then
             match main with
             | TNode _ ->
-                let new_cnode = cnode_with_update cnode pos (resurrect t) in
+                let new_cnode =
+                  cnode_with_update cnode pos (resurrect (INode i))
+                in
                 if not @@ gen_dcss parent cn (contract new_cnode lvl) startgen
-                then clean_parent parent t hashcode lvl startgen
+                then clean_parent parent i hashcode lvl startgen
             | _ -> ())
       | _ -> ()
 
@@ -214,12 +208,14 @@ module Make (H : Hashable) = struct
 
   let update key f t =
     let hashcode = hash_to_binary key in
+    let rec loop () =
+      let startgen = Kcas.get t.root.gen in
     (* Boolean return value to signal a mapping was deleted. *)
-    let rec aux i lvl parent startgen =
+      let rec aux i lvl parent =
       match Kcas.get i.main with
       | CNode cnode as cn ->
           let flag, pos = flagpos lvl cnode.bmp hashcode in
-          if Int32.logand cnode.bmp flag = 0l then
+            if Int32.logand flag cnode.bmp = 0l then
             (* No flag collision, the key isn't in the map. *)
             match f None with
             | Some value ->
@@ -228,17 +224,17 @@ module Make (H : Hashable) = struct
                   cnode_with_insert cnode flag pos { key; value }
                 in
                 if gen_dcss i cn (CNode new_cnode) startgen then false
-                else raise Recur
+                  else loop ()
             | None -> false
           else
             let leaf_removed =
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux inner (lvl + 5) (Some i) startgen
+                      aux inner (lvl + 5) (Some i)
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
-                  then aux i lvl parent startgen
-                  else raise Recur
+                    then aux i lvl parent
+                    else loop ()
               | Leaf l -> (
                   if H.compare l.key key = 0 then
                     match f (Some l.value) with
@@ -248,12 +244,12 @@ module Make (H : Hashable) = struct
                           cnode_with_update cnode pos (Leaf { key; value })
                         in
                         if gen_dcss i cn (CNode new_cnode) startgen then false
-                        else raise Recur
+                          else loop ()
                     | None ->
                         (* We need to remove this value *)
                         let new_cnode = cnode_with_delete cnode pos flag in
                         let contracted = contract new_cnode lvl in
-                        gen_dcss i cn contracted startgen || raise Recur
+                          gen_dcss i cn contracted startgen || loop ()
                   else
                     match f None with
                     | Some value ->
@@ -264,9 +260,11 @@ module Make (H : Hashable) = struct
                             ({ key; value }, hashcode)
                             (lvl + 5) startgen
                         in
-                        let new_cnode = cnode_with_update cnode pos new_pair in
+                          let new_cnode =
+                            cnode_with_update cnode pos new_pair
+                          in
                         if gen_dcss i cn (CNode new_cnode) startgen then false
-                        else raise Recur
+                          else loop ()
                     (* The key isn't in the map. *)
                     | None -> false)
             in
@@ -279,18 +277,16 @@ module Make (H : Hashable) = struct
             leaf_removed
       | TNode _ ->
           clean parent (lvl - 5) startgen;
-          raise Recur
+            loop ()
       | LNode lst as ln ->
           let new_list, changed =
             List.remove_map (fun leaf -> H.compare leaf.key key = 0) lst
           in
-          changed && (gen_dcss i ln (LNode new_list) startgen || raise Recur)
+            changed && (gen_dcss i ln (LNode new_list) startgen || loop ())
     in
-    let rec loop () =
-      try ignore @@ aux t.root 0 None (Kcas.get t.root.gen)
-      with Recur -> loop ()
+      aux t.root 0 None
     in
-    loop ()
+    ignore (loop ())
 
   let add key value t = update key (fun _ -> Some value) t
   let remove key t = update key (fun _ -> None) t
@@ -309,18 +305,23 @@ module Make (H : Hashable) = struct
   let is_empty t =
     match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l | _ -> false
 
-  let size t =
-    let rec aux i =
+  let rec size t =
+    let startgen = Kcas.get t.root.gen in
+    let rec aux i lvl parent =
       match Kcas.get i.main with
       | CNode cnode ->
           Array.fold_left
             (fun acc b ->
-              match b with Leaf _ -> acc + 1 | INode i -> acc + aux i)
+              match b with
+              | Leaf _ -> acc + 1
+              | INode inner -> acc + aux inner (lvl + 5) (Some i))
             0 cnode.array
-      | TNode _ -> 1
+      | TNode _ ->
+          clean parent (lvl - 5) startgen;
+          size t
       | LNode lst -> List.length lst
     in
-    aux t.root
+    aux t.root 0 None
 
   let save_as_dot string_of_val t filename =
     let oc = open_out filename in
