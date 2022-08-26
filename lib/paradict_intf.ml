@@ -23,7 +23,7 @@ module type S = sig
 
   val update : key -> ('a option -> 'a option) -> 'a t -> unit
   (** [update k f m] changes the mapping of [k] to [f (find_opt k m)].
-    If [f] returns [None], the mapping is removed. *)
+    If [f (Some v)] returns [None], the mapping [v] is removed. *)
 
   val add : key -> 'a -> 'a t -> unit
   (** Add the (key, value) pair to the map, overwriting any previous mapping. *)
@@ -43,6 +43,37 @@ module type S = sig
   val size : 'a t -> int
   (** Return the number of elements in the map.
       Result might not be accurate in concurrent contexts. Take a snapshot first! *)
+
+  val iter : (key -> 'a -> unit) -> 'a t -> unit
+  (** Apply a function to all mappings in unspecified order.
+      The behavior is not specified if the map is modified (by the function
+        or concurrent access) during the iteration. *)
+
+  val map : (key -> 'a -> 'a) -> ?high_contention_strat:bool -> 'a t -> unit
+  (** [map f t] replaces every value [v] associated with key [k] by the result of calling [f k v], in unspecified order.
+
+      The optional parameter [high_contention_strat] (set to [false] by default)
+      may improve performances in the case of high contention and lengthy [f] calls.
+      If [f] is side-effecting, those effects may happen an unspecified number of times, as operations are restarted in case of CAS conflicts.
+      Use a pure function instead. *)
+
+  val fold : (key -> 'a -> 'b -> 'b) -> 'a t -> 'b -> 'b
+  (** [fold f t init] computes [f k1 v1 ... (f kN vN init)] where [k1...kN] are the keys
+      and [v1...vN] the associated values, in unspecified order.
+
+      If [f] is side-effecting, those effects may happen an unspecified number of times, as operations are restarted in case of CAS conflicts.
+      Use a pure function instead. *)
+
+  val cast : (key -> 'a -> 'b) -> 'a t -> 'b t
+  (** Cast is the more traditional function called map or fmap.
+      The original map is untouched.
+      TODO: find a better name & review if it is really needed. *)
+
+  val exists : (key -> 'a -> bool) -> 'a t -> bool
+  (** Check that there exists at least one (key, value) pair satisfying the predicate. *)
+
+  val for_all : (key -> 'a -> bool) -> 'a t -> bool
+  (** Check that all (key, value) pairs satisfy the predicate. *)
 
   val save_as_dot : ('a -> string) -> 'a t -> string -> unit
   (** Save the map as a graph in a .dot file.

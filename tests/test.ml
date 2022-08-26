@@ -31,6 +31,100 @@ let add_find =
 
 let basics = [ mem_empty; add_mem; add_find ]
 
+let iter_test =
+  Alcotest.test_case "iter" `Quick @@ fun () ->
+  let numbers = create () in
+  for i = 0 to 64 do
+    add (string_of_int i) i numbers
+  done;
+  let module EntrySet = Set.Make (struct
+    type t = string * int
+
+    let compare = compare
+  end) in
+  let set = ref EntrySet.empty in
+  iter (fun k v -> set := EntrySet.add (k, v) !set) numbers;
+  for i = 0 to 64 do
+    let found = EntrySet.mem (string_of_int i, i) !set in
+    Alcotest.(check bool) "Iter should have performed an insert" true found
+  done
+
+let map_test =
+  Alcotest.test_case "map low contention & find_opt" `Quick @@ fun () ->
+  let numbers = create () in
+  for i = 0 to 64 do
+    add (string_of_int i) i numbers
+  done;
+  map (fun _ i -> if i <= 32 then i else -i) numbers;
+  for i = 0 to 64 do
+    let found = find_opt (string_of_int i) numbers in
+    let expected = if i <= 32 then i else -i in
+    Alcotest.(check (option int))
+      "Map should perform in-place modifications" (Some expected) found
+  done
+
+let map_strat =
+  Alcotest.test_case "map high contention & find_opt" `Quick @@ fun () ->
+  let numbers = create () in
+  for i = 0 to 8 do
+    add (string_of_int i) i numbers
+  done;
+  map (fun _ i -> -i) ~high_contention_strat:true numbers;
+  for i = 0 to 8 do
+    let found = find_opt (string_of_int i) numbers in
+    let expected = Some (-i) in
+    Alcotest.(check (option int))
+      "Map should perform in-place modifications" expected found
+  done
+
+let fold_test =
+  Alcotest.test_case "fold" `Quick @@ fun () ->
+  let numbers = create () in
+  for i = 0 to 64 do
+    add (string_of_int i) i numbers
+  done;
+  let called = ref 0 in
+  let result =
+    fold
+      (fun k v acc ->
+        called := !called + 1;
+        if k <> "10" then acc + v else acc)
+      numbers 0
+  in
+  Alcotest.(check int)
+    "Fold should call the function the correct amount of times" 65 !called;
+  let expected = 2070 in
+  Alcotest.(check int) "Fold should compute the correct value" expected result;
+  ()
+
+let exists_test =
+  Alcotest.test_case "exists" `Quick @@ fun () ->
+  let numbers = create () in
+  for i = 0 to 64 do
+    add (string_of_int i) i numbers
+  done;
+  let is_prime _ n = n = 42 (* I swear it's prime *) in
+  let result = exists is_prime numbers in
+  Alcotest.(check bool) "Exists should find a prime number" true result;
+  ()
+
+let for_all_test =
+  Alcotest.test_case "for all" `Quick @@ fun () ->
+  let numbers = create () in
+  for i = 0 to 64 do
+    add (string_of_int i) i numbers
+  done;
+  let is_stringed str n = int_of_string str = n in
+  let result = for_all is_stringed numbers in
+  Alcotest.(check bool) "For all should validate trivial claim" true result;
+  let is_even _ n = n mod 2 = 0 in
+  let result = for_all is_even numbers in
+  Alcotest.(check bool) "For all should invalidate false claim" false result;
+  ()
+
+let iterations =
+  [ iter_test; map_test; map_strat; fold_test; exists_test; for_all_test ]
+
 let collision_mem =
   Alcotest.test_case "collision & mem" `Quick @@ fun () ->
   let numbers = create () in
@@ -45,7 +139,7 @@ let collision_mem =
   done;
   ()
 
-let depth_full_empty =
+let size_empty =
   Alcotest.test_case "size after full remove" `Quick @@ fun () ->
   let numbers = create () in
   for i = 0 to 32 do
@@ -58,7 +152,7 @@ let depth_full_empty =
     "After a full removal, root should be empty" true (is_empty numbers);
   ()
 
-let depth = [ collision_mem; depth_full_empty ]
+let collisions = [ collision_mem; size_empty ]
 
 let para_add_mem =
   let add_bunch map i =
@@ -136,7 +230,7 @@ let basic_snap =
   ()
 
 let snap_then_ops =
-  Alcotest.test_case "Snapshot then operations" `Quick @@ fun () ->
+  Alcotest.test_case "snapshot then operations" `Quick @@ fun () ->
   let map = create () in
   for i = 0 to 32 do
     add (string_of_int i) i map
@@ -208,7 +302,8 @@ let () =
   Alcotest.run "Everything"
     [
       ("Basic operations", basics);
-      ("Sequential collisions", depth);
+      ("Sequential iterations", iterations);
+      ("Sequential collisions", collisions);
       ("Hand-made parallel cases", parallel);
       ("Snapshot interactions", snapshots);
       ("Saving to .dot files", savings);

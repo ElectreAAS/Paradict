@@ -131,28 +131,28 @@ module Make (H : Hashable) = struct
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
       let rec aux i lvl parent =
-      match Kcas.get i.main with
-      | CNode cnode as cn -> (
-          let flag, pos = flagpos lvl cnode.bmp hashcode in
+        match Kcas.get i.main with
+        | CNode cnode as cn -> (
+            let flag, pos = flagpos lvl cnode.bmp hashcode in
             if Int32.logand flag cnode.bmp = 0l then raise Not_found
-          else
-            match cnode.array.(pos) with
-            | INode inner ->
-                if Kcas.get inner.gen = startgen then
+            else
+              match cnode.array.(pos) with
+              | INode inner ->
+                  if Kcas.get inner.gen = startgen then
                     aux inner (lvl + 5) (Some i)
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
                   then aux i lvl parent
                   else loop ()
-            | Leaf leaf ->
-                if H.compare leaf.key key = 0 then leaf.value
-                else raise Not_found)
-      | LNode lst ->
-          let leaf = List.find (fun l -> H.compare l.key key = 0) lst in
-          leaf.value
-      | TNode _ ->
-          clean parent (lvl - 5) startgen;
+              | Leaf leaf ->
+                  if H.compare leaf.key key = 0 then leaf.value
+                  else raise Not_found)
+        | LNode lst ->
+            let leaf = List.find (fun l -> H.compare l.key key = 0) lst in
+            leaf.value
+        | TNode _ ->
+            clean parent (lvl - 5) startgen;
             loop ()
-    in
+      in
       aux t.root 0 None
     in
     loop ()
@@ -165,14 +165,14 @@ module Make (H : Hashable) = struct
     let flag2 = hash_to_flag lvl h2 in
     let bmp = Int32.logor flag1 flag2 in
     let new_main_node =
-    if bmp = 0l then
-      (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
+      if bmp = 0l then
+        (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
         LNode [ l1; l2 ]
-    else
+      else
         let array =
-      match Int32.unsigned_compare flag1 flag2 with
-      | 0 ->
-          (* Collision on this level, we need to go deeper *)
+          match Int32.unsigned_compare flag1 flag2 with
+          | 0 ->
+              (* Collision on this level, we need to go deeper *)
               [| branch_of_pair (l1, h1) (l2, h2) (lvl + 5) gen |]
           | 1 -> [| Leaf l2; Leaf l1 |]
           | _ -> [| Leaf l1; Leaf l2 |]
@@ -210,80 +210,80 @@ module Make (H : Hashable) = struct
     let hashcode = hash_to_binary key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-    (* Boolean return value to signal a mapping was deleted. *)
+      (* Boolean return value to signal a mapping was deleted. *)
       let rec aux i lvl parent =
-      match Kcas.get i.main with
-      | CNode cnode as cn ->
-          let flag, pos = flagpos lvl cnode.bmp hashcode in
+        match Kcas.get i.main with
+        | CNode cnode as cn ->
+            let flag, pos = flagpos lvl cnode.bmp hashcode in
             if Int32.logand flag cnode.bmp = 0l then
-            (* No flag collision, the key isn't in the map. *)
-            match f None with
-            | Some value ->
-                (* We need to insert it. *)
-                let new_cnode =
-                  cnode_with_insert cnode flag pos { key; value }
-                in
-                if gen_dcss i cn (CNode new_cnode) startgen then false
+              (* No flag collision, the key isn't in the map. *)
+              match f None with
+              | Some value ->
+                  (* We need to insert it. *)
+                  let new_cnode =
+                    cnode_with_insert cnode flag pos { key; value }
+                  in
+                  if gen_dcss i cn (CNode new_cnode) startgen then false
                   else loop ()
-            | None -> false
-          else
-            let leaf_removed =
-              match cnode.array.(pos) with
-              | INode inner ->
-                  if Kcas.get inner.gen = startgen then
+              | None -> false
+            else
+              let leaf_removed =
+                match cnode.array.(pos) with
+                | INode inner ->
+                    if Kcas.get inner.gen = startgen then
                       aux inner (lvl + 5) (Some i)
-                  else if regenerate i cn pos (Kcas.get inner.main) startgen
+                    else if regenerate i cn pos (Kcas.get inner.main) startgen
                     then aux i lvl parent
                     else loop ()
-              | Leaf l -> (
-                  if H.compare l.key key = 0 then
-                    match f (Some l.value) with
-                    | Some value ->
-                        (* We found a value to be updated. *)
-                        let new_cnode =
-                          cnode_with_update cnode pos (Leaf { key; value })
-                        in
-                        if gen_dcss i cn (CNode new_cnode) startgen then false
+                | Leaf l -> (
+                    if H.compare l.key key = 0 then
+                      match f (Some l.value) with
+                      | Some value ->
+                          (* We found a value to be updated. *)
+                          let new_cnode =
+                            cnode_with_update cnode pos (Leaf { key; value })
+                          in
+                          if gen_dcss i cn (CNode new_cnode) startgen then false
                           else loop ()
-                    | None ->
-                        (* We need to remove this value *)
-                        let new_cnode = cnode_with_delete cnode pos flag in
-                        let contracted = contract new_cnode lvl in
+                      | None ->
+                          (* We need to remove this value *)
+                          let new_cnode = cnode_with_delete cnode pos flag in
+                          let contracted = contract new_cnode lvl in
                           gen_dcss i cn contracted startgen || loop ()
-                  else
-                    match f None with
-                    | Some value ->
-                        (* We create a new entry colliding with a leaf, so we create a new level. *)
-                        let new_pair =
-                          branch_of_pair
-                            (l, hash_to_binary l.key)
-                            ({ key; value }, hashcode)
-                            (lvl + 5) startgen
-                        in
+                    else
+                      match f None with
+                      | Some value ->
+                          (* We create a new entry colliding with a leaf, so we create a new level. *)
+                          let new_pair =
+                            branch_of_pair
+                              (l, hash_to_binary l.key)
+                              ({ key; value }, hashcode)
+                              (lvl + 5) startgen
+                          in
                           let new_cnode =
                             cnode_with_update cnode pos new_pair
                           in
-                        if gen_dcss i cn (CNode new_cnode) startgen then false
+                          if gen_dcss i cn (CNode new_cnode) startgen then false
                           else loop ()
-                    (* The key isn't in the map. *)
-                    | None -> false)
-            in
-            (if leaf_removed then
-             match (Kcas.get i.main, parent) with
-             | TNode _, Some parent ->
-                 clean_parent parent i hashcode (lvl - 5) startgen
-             (* 'parent = None' means i is the root, and the root cannot have a TNode child. *)
-             | _ -> ());
-            leaf_removed
-      | TNode _ ->
-          clean parent (lvl - 5) startgen;
+                      (* The key isn't in the map. *)
+                      | None -> false)
+              in
+              (if leaf_removed then
+               match (Kcas.get i.main, parent) with
+               | TNode _, Some parent ->
+                   clean_parent parent i hashcode (lvl - 5) startgen
+               (* 'parent = None' means i is the root, and the root cannot have a TNode child. *)
+               | _ -> ());
+              leaf_removed
+        | TNode _ ->
+            clean parent (lvl - 5) startgen;
             loop ()
-      | LNode lst as ln ->
-          let new_list, changed =
-            List.remove_map (fun leaf -> H.compare leaf.key key = 0) lst
-          in
+        | LNode lst as ln ->
+            let new_list, changed =
+              List.remove_map (fun leaf -> H.compare leaf.key key = 0) lst
+            in
             changed && (gen_dcss i ln (LNode new_list) startgen || loop ())
-    in
+      in
       aux t.root 0 None
     in
     ignore (loop ())
@@ -322,6 +322,129 @@ module Make (H : Hashable) = struct
       | LNode lst -> List.length lst
     in
     aux t.root 0 None
+
+  let rec map f ?(high_contention_strat = false) t =
+    let startgen = Kcas.get t.root.gen in
+    let rec aux i lvl parent =
+      match Kcas.get i.main with
+      | CNode cnode as cn ->
+          if high_contention_strat then
+            (* The high contention strategy consists in performing changes cell by cell instead of the full array in one go. *)
+            let rec update_at pos =
+              match Kcas.get i.main with
+              | CNode cnode as cn -> (
+                  match cnode.array.(pos) with
+                  | INode inner -> aux inner (lvl + 5) (Some i)
+                  | Leaf { key; value } ->
+                      let new_leaf = Leaf { key; value = f key value } in
+                      let new_cnode =
+                        CNode (cnode_with_update cnode pos new_leaf)
+                      in
+                      if not @@ gen_dcss i cn new_cnode startgen then
+                        update_at pos)
+              | _ ->
+                  failwith
+                    "CNode was tombed, break the for loop and recurse with aux"
+            in
+            (* FIXME: high probability of a bug coming out of this ungodly creation. *)
+            try
+              for pos = 0 to Array.length cnode.array - 1 do
+                update_at pos
+              done
+            with Failure _ -> aux i lvl parent
+          else
+            let new_array =
+              Array.map
+                (function
+                  | Leaf { key; value } -> Leaf { key; value = f key value }
+                  | INode inner as child ->
+                      (* TODO: this recursive call could be parallelized, test if that is useful *)
+                      aux inner (lvl + 5) (Some i);
+                      child)
+                cnode.array
+            in
+            if
+              not
+              @@ gen_dcss i cn (CNode { cnode with array = new_array }) startgen
+            then map f ~high_contention_strat t
+      | TNode _ ->
+          clean parent (lvl - 5) startgen;
+          map f ~high_contention_strat t
+      | LNode list as ln ->
+          let new_list =
+            List.map (fun { key; value } -> { key; value = f key value }) list
+          in
+          if not @@ gen_dcss i ln (LNode new_list) startgen then
+            map f ~high_contention_strat t
+    in
+    aux t.root 0 None
+
+  let cast f t =
+    let startgen = Kcas.get t.root.gen in
+    let rec aux i =
+      match Kcas.get i.main with
+      | CNode cnode ->
+          let array =
+            Array.map
+              (function
+                | INode inner -> INode (aux inner)
+                | Leaf { key; value } -> Leaf { key; value = f key value })
+              cnode.array
+          in
+          {
+            main = Kcas.ref @@ CNode { cnode with array };
+            gen = Kcas.ref startgen;
+          }
+      | TNode _ -> failwith "TODO: finish this if necessary"
+      | LNode list ->
+          let new_list =
+            List.map
+              (function { key; value } -> { key; value = f key value })
+              list
+          in
+          { main = Kcas.ref @@ LNode new_list; gen = Kcas.ref startgen }
+    in
+    { root = aux t.root }
+
+  let rec reduce_internal (array_fn, list_fn) f t =
+    let startgen = Kcas.get t.root.gen in
+    let rec aux i lvl parent =
+      match Kcas.get i.main with
+      | CNode cnode ->
+          array_fn
+            (function
+              | Leaf { key; value } -> f key value
+              | INode inner -> aux inner (lvl + 5) (Some i))
+            cnode.array
+      | TNode _ ->
+          clean parent (lvl - 5) startgen;
+          reduce_internal (array_fn, list_fn) f t
+      | LNode list -> list_fn (fun { key; value } -> f key value) list
+    in
+    aux t.root 0 None
+
+  let exists pred = reduce_internal (Array.exists, List.exists) pred
+  let for_all pred = reduce_internal (Array.for_all, List.for_all) pred
+  let iter f = reduce_internal (Array.iter, List.iter) f
+
+  let rec fold (f : key -> 'a -> 'b -> 'b) (t : 'a t) (init : 'b) : 'b =
+    let startgen = Kcas.get t.root.gen in
+    let rec aux acc i lvl parent =
+      match Kcas.get i.main with
+      | CNode cnode ->
+          Array.fold_left
+            (fun inner_acc brnch ->
+              match brnch with
+              | Leaf { key; value } -> f key value inner_acc
+              | INode inner -> aux inner_acc inner (lvl + 5) (Some i))
+            acc cnode.array
+      | TNode _ ->
+          clean parent (lvl - 5) startgen;
+          fold f t init
+      | LNode list ->
+          List.fold_left (fun acc { key; value } -> f key value acc) init list
+    in
+    aux init t.root 0 None
 
   let save_as_dot string_of_val t filename =
     let oc = open_out filename in
