@@ -33,6 +33,18 @@ module List = struct
         else
           let filtered, res = remove_map pred xs in
           (x :: filtered, res)
+
+  let print pp l =
+    let fmt = Format.std_formatter in
+    let rec aux = function
+      | [ x ] -> Format.fprintf fmt "%s]\n%!" (pp x)
+      | x :: xs ->
+          Format.fprintf fmt "%s; " (pp x);
+          aux xs
+      | [] -> Format.fprintf fmt "]\n%!"
+    in
+    Format.fprintf fmt "[";
+    aux l
 end
 
 (** Ugly but there's nothing in the stdlib... *)

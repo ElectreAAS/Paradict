@@ -49,13 +49,8 @@ struct
         match P.find_opt i t with Some _ -> assert false | None -> ())
 
   let () =
-    bench "remove: inexistant" @@ fun () ->
-    iter (nb + 1) (2 * nb) (fun i -> assert (not (P.remove i t)));
-    assert (P.size t = nb)
-
-  let () =
     bench "remove: all" @@ fun () ->
-    iter 1 nb (fun i -> assert (P.remove i t));
+    iter 1 nb (fun i -> P.remove i t);
     assert (P.size t = 0);
     assert (P.is_empty t)
 end

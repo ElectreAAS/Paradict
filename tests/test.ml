@@ -2,7 +2,7 @@ open Paradict.Make (struct
   type t = string
 
   let compare = compare
-  let to_string x = x
+  let to_string = Fun.id
 end)
 
 let mem_empty =
@@ -106,6 +106,9 @@ let exists_test =
   let is_prime _ n = n = 42 (* I swear it's prime *) in
   let result = exists is_prime numbers in
   Alcotest.(check bool) "Exists should find a prime number" true result;
+  let is_big _ n = n = 1000 in
+  let result = exists is_big numbers in
+  Alcotest.(check bool) "Exists should not find absent number" false result;
   ()
 
 let for_all_test =

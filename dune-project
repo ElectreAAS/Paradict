@@ -22,7 +22,8 @@
   dune
   ocaml_intrinsics
   digestif
-  (kcas (= dev))
+  (kcas
+   (= dev))
   (domainslib :with-test)
   (mtime :with-test)
   (alcotest :with-test)

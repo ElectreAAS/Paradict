@@ -501,7 +501,8 @@ module Make (H : Hashable) = struct
         cnode.array
     and pr_tnode leaf =
       pr_leaf_info leaf;
-      Printf.fprintf oc "\tT%d [shape=box style=box color=black];\n" !it;
+      Printf.fprintf oc
+        "\tT%d [style=filled shape=box fontcolor=white color=black];\n" !it;
       Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
       iv := !iv + 1;
       it := !it + 1
