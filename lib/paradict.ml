@@ -308,6 +308,8 @@ module Make (H : Hashable) = struct
       { root = { main = Kcas.ref main; gen = Kcas.ref (object end) } }
     else snapshot t
 
+  let copy = snapshot
+
   let is_empty t =
     match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l | _ -> false
 
@@ -329,63 +331,87 @@ module Make (H : Hashable) = struct
     in
     aux t.root 0 None
 
-  let rec map f ?(high_contention_strat = false) t =
+  (* This function assumes l_filtered is sorted and it only contains valid indexes *)
+  let remove_from_bitmap bmp l_filtered =
+    let rec aux cursor bmp l_filtered seen =
+      if cursor >= 32 then bmp
+      else
+        let bit = Int32.shift_left 1l cursor in
+        let flag = Int32.logand bit bmp in
+        if flag <> 0l then
+          match l_filtered with
+          | x :: xs when x = seen ->
+              aux (cursor + 1)
+                (Int32.logand bmp (Int32.lognot flag))
+                xs (seen + 1)
+          | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
+        else aux (cursor + 1) bmp l_filtered seen
+    in
+    let res =
+      aux
+        (Ocaml_intrinsics.Int32.count_trailing_zeros_nonzero_arg bmp)
+        bmp l_filtered 0
+    in
+    res
+
+  let rec filter_map_inplace f t =
     let startgen = Kcas.get t.root.gen in
     let rec aux i lvl parent =
       match Kcas.get i.main with
-      | CNode cnode as cn ->
-          if high_contention_strat then
-            (* The high contention strategy consists in performing changes cell by cell instead of the full array in one go. *)
-            let rec update_at pos =
-              match Kcas.get i.main with
-              | CNode cnode as cn -> (
-                  match cnode.array.(pos) with
-                  | INode inner -> aux inner (lvl + 5) (Some i)
-                  | Leaf { key; value } ->
-                      let new_leaf = Leaf { key; value = f key value } in
-                      let new_cnode =
-                        CNode (cnode_with_update cnode pos new_leaf)
-                      in
-                      if not @@ gen_dcss i cn new_cnode startgen then
-                        update_at pos)
+      | CNode cnode as cn -> (
+          let rec filter_cnode l_mapped l_filtered pos =
+            if pos < 0 then
+              match l_mapped with
+              | [] ->
+                  (* The entirety of the cnode contents was filtered *)
+                  None
+              | [ Leaf l ] when lvl > 0 -> Some (TNode l)
               | _ ->
-                  failwith
-                    "CNode was tombed, break the for loop and recurse with aux"
-            in
-            (* FIXME: high probability of a bug coming out of this ungodly creation. *)
-            try
-              for pos = 0 to Array.length cnode.array - 1 do
-                update_at pos
-              done
-            with Failure _ -> aux i lvl parent
-          else
-            let new_array =
-              Array.map
-                (function
-                  | Leaf { key; value } -> Leaf { key; value = f key value }
-                  | INode inner as child ->
-                      (* TODO: this recursive call could be parallelized, test if that is useful *)
-                      aux inner (lvl + 5) (Some i);
-                      child)
-                cnode.array
-            in
-            if
-              not
-              @@ gen_dcss i cn (CNode { cnode with array = new_array }) startgen
-            then map f ~high_contention_strat t
+                  let array = Array.of_list l_mapped in
+                  let bmp = remove_from_bitmap cnode.bmp l_filtered in
+                  Some (CNode { bmp; array })
+            else
+              match cnode.array.(pos) with
+              | Leaf { key; value } -> (
+                  match f key value with
+                  | Some value ->
+                      filter_cnode
+                        (Leaf { key; value } :: l_mapped)
+                        l_filtered (pos - 1)
+                  | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1))
+              | INode inner -> (
+                  match aux inner (lvl + 5) (Some i) with
+                  | Some branch ->
+                      filter_cnode (branch :: l_mapped) l_filtered (pos - 1)
+                  | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1))
+          in
+          let new_main_node =
+            filter_cnode [] [] (Array.length cnode.array - 1)
+          in
+          match new_main_node with
+          | Some (TNode l) -> Some (Leaf l)
+          | Some mainnode ->
+              if gen_dcss i cn mainnode startgen then Some (INode i)
+              else raise Exit
+          | None -> None)
       | TNode _ ->
           clean parent (lvl - 5) startgen;
-          map f ~high_contention_strat t
+          raise Exit
       | LNode list as ln ->
           let new_list =
-            List.map (fun { key; value } -> { key; value = f key value }) list
+            List.filter_map
+              (fun { key; value } ->
+                match f key value with
+                | Some value -> Some { key; value }
+                | None -> None)
+              list
           in
-          if not @@ gen_dcss i ln (LNode new_list) startgen then
-            map f ~high_contention_strat t
+          if gen_dcss i ln (LNode new_list) startgen then Some (INode i)
+          else raise Exit
     in
-    aux t.root 0 None
+    try ignore @@ aux t.root 0 None with Exit -> filter_map_inplace f t
 
-  let cast f t =
+  let map f t =
     let startgen = Kcas.get t.root.gen in
     let rec aux i =
       match Kcas.get i.main with

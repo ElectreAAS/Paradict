@@ -27,7 +27,7 @@ module type S = sig
   val update : key -> ('a option -> 'a option) -> 'a t -> unit
   (** [update k f m] changes the mapping of [k] to [f (find_opt k m)].
 
-    If [f (Some v)] returns [None], the mapping [v] is removed. *)
+      If [f (Some v)] returns [None], the mapping [v] is removed. *)
 
   val add : key -> 'a -> 'a t -> unit
   (** Add the (key, value) pair to the map, overwriting any previous mapping. *)
@@ -35,7 +35,7 @@ module type S = sig
   val remove : key -> 'a t -> unit
   (** Remove the mapping of the key *)
 
-  val snapshot : 'a t -> 'a t
+  val copy : 'a t -> 'a t
   (** Take a snapshot of the map. This is a O(1) operation.
 
       The original map can still be used, even in concurrent contexts. *)
@@ -53,25 +53,23 @@ module type S = sig
       The behavior is not specified if the map is modified (by the function
         or concurrent access) during the iteration. *)
 
-  val map : (key -> 'a -> 'a) -> ?high_contention_strat:bool -> 'a t -> unit
-  (** [map f t] replaces every value [v] associated with key [k] by the result of calling [f k v], in unspecified order.
-
-      The optional parameter [high_contention_strat] (set to [false] by default)
-      may improve performances in the case of high contention and lengthy [f] calls.
-      If [f] is side-effecting, those effects may happen an unspecified number of times, as operations are restarted in case of CAS conflicts.
-      Use a pure function instead. *)
+  val map : (key -> 'a -> 'b) -> 'a t -> 'b t
+  (** [map f t] returns a new dictionnary where every pair (k,v) in t is replaced by (k, f k v);
+      The original map is untouched. *)
 
   val fold : (key -> 'a -> 'b -> 'b) -> 'a t -> 'b -> 'b
-  (** [fold f t init] computes [f k1 v1 ... (f kN vN init)] where [k1...kN] are the keys
+  (** [fold f t init] computes [f k1 v1 (f k2 v2 ... (f kN vN init))] where [k1...kN] are the keys
       and [v1...vN] the associated values, in unspecified order.
 
       If [f] is side-effecting, those effects may happen an unspecified number of times, as operations are restarted in case of CAS conflicts.
       Use a pure function instead. *)
 
-  val cast : (key -> 'a -> 'b) -> 'a t -> 'b t
-  (** Cast is the more traditional function called map or fmap.
-      The original map is untouched.
-      TODO: find a better name & review if it is really needed. *)
+  val filter_map_inplace : (key -> 'a -> 'a option) -> 'a t -> unit
+  (** [filter_map_inplace f t] applies [f] to all mappings, updating them depending on the result of [f k v], in unspecified order.
+
+      If [f] returns [None], the mapping is removed.
+      If [f] is side-effecting, those effects may happen an unspecified number of times, as operations are restarted in case of CAS conflicts.
+      Use a pure function instead. *)
 
   val exists : (key -> 'a -> bool) -> 'a t -> bool
   (** Check that there exists at least one (key, value) pair satisfying the predicate. *)

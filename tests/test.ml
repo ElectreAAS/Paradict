@@ -49,32 +49,32 @@ let iter_test =
     Alcotest.(check bool) "Iter should have performed an insert" true found
   done
 
-let map_test =
-  Alcotest.test_case "map low contention & find_opt" `Quick @@ fun () ->
+let mi =
+  Alcotest.test_case "map inplace" `Quick @@ fun () ->
   let numbers = create () in
   for i = 0 to 64 do
     add (string_of_int i) i numbers
   done;
-  map (fun _ i -> if i <= 32 then i else -i) numbers;
+  filter_map_inplace (fun _ i -> if i <= 32 then Some i else Some (-i)) numbers;
   for i = 0 to 64 do
     let found = find_opt (string_of_int i) numbers in
     let expected = if i <= 32 then i else -i in
     Alcotest.(check (option int))
-      "Map should perform in-place modifications" (Some expected) found
+      "FMI should perform in-place modifications" (Some expected) found
   done
 
-let map_strat =
-  Alcotest.test_case "map high contention & find_opt" `Quick @@ fun () ->
+let fmi =
+  Alcotest.test_case "filter map inplace" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 8 do
+  for i = 0 to 64 do
     add (string_of_int i) i numbers
   done;
-  map (fun _ i -> -i) ~high_contention_strat:true numbers;
-  for i = 0 to 8 do
+  filter_map_inplace (fun _ i -> if i <= 32 then Some (2 * i) else None) numbers;
+  for i = 0 to 64 do
     let found = find_opt (string_of_int i) numbers in
-    let expected = Some (-i) in
+    let expected = if i <= 32 then Some (2 * i) else None in
     Alcotest.(check (option int))
-      "Map should perform in-place modifications" expected found
+      "FMI should perform in-place modifs & removals" expected found
   done
 
 let fold_test =
@@ -125,8 +125,7 @@ let for_all_test =
   Alcotest.(check bool) "For all should invalidate false claim" false result;
   ()
 
-let iterations =
-  [ iter_test; map_test; map_strat; fold_test; exists_test; for_all_test ]
+let iterations = [ iter_test; mi; fmi; fold_test; exists_test; for_all_test ]
 
 let collision_mem =
   Alcotest.test_case "collision & mem" `Quick @@ fun () ->
@@ -222,33 +221,59 @@ let parallel = [ para_add_mem; para_add_then_mem; para_add_contention ]
 
 let basic_snap =
   Alcotest.test_case "snapshot" `Quick @@ fun () ->
-  let map = create () in
-  add "Hello" "World" map;
-  let map' = snapshot map in
-  add "Not in" "snap" map;
+  let dict = create () in
+  add "Hello" "World" dict;
+  let dict' = copy dict in
+  add "Not in" "snap" dict;
   Alcotest.(check (option string))
-    "Snapshot should not eat additions" (Some "World") (find_opt "Hello" map');
+    "Snapshot should not eat additions" (Some "World") (find_opt "Hello" dict');
   Alcotest.(check (option string))
-    "Snapshot should not eat additions" None (find_opt "Not in" map');
+    "Snapshot should not eat additions" None (find_opt "Not in" dict');
   ()
 
 let snap_then_ops =
   Alcotest.test_case "snapshot then operations" `Quick @@ fun () ->
-  let map = create () in
+  let dict = create () in
   for i = 0 to 32 do
-    add (string_of_int i) i map
+    add (string_of_int i) i dict
   done;
-  let map' = snapshot map in
+  let dict' = copy dict in
   for i = 0 to 32 do
     let stri = string_of_int i in
-    remove stri map;
-    let found = find_opt stri map' in
+    remove stri dict;
+    let found = find_opt stri dict' in
     Alcotest.(check (option int))
       "Added value should still be present in snapshotted version" (Some i)
       found
   done
 
-let snapshots = [ basic_snap; snap_then_ops ]
+let map_test =
+  Alcotest.test_case "map then operations" `Quick @@ fun () ->
+  let names =
+    [| "Joe"; "Jack"; "William"; "Averell"; "Lucky Luke"; "Jolly Jumper" |]
+  in
+  let heights = create () in
+  Array.iteri (fun i name -> add name i heights) names;
+  let is_nice name _ = name = "Lucky Luke" || name = "Jolly Jumper" in
+  let nices = map is_nice heights in
+  remove "Jack" heights;
+  add "You" true nices;
+  Alcotest.(check int)
+    "Map should not prevent removals on earlier dict" 5 (size heights);
+  let result = for_all (fun name height -> names.(height) = name) heights in
+  Alcotest.(check bool) "Map should not modify existing data" true result;
+
+  Alcotest.(check int)
+    "Map should not prevent insertions on later dict" 7 (size nices);
+  iter
+    (fun name niceness ->
+      let expected = is_nice name niceness || name = "You" in
+      Alcotest.(check bool)
+        "Map should apply the function correctly" expected niceness)
+    nices;
+  ()
+
+let snapshots = [ basic_snap; snap_then_ops; map_test ]
 
 let save_single =
   Alcotest.test_case "save singleton trie" `Quick @@ fun () ->
