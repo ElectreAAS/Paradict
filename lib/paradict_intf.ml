@@ -12,6 +12,9 @@ module type S = sig
   val create : unit -> 'a t
   (** Create an empty dictionnary. *)
 
+  val clear : 'a t -> unit
+  (** Empty the dictionnary. *)
+
   val find : key -> 'a t -> 'a
   (** Return the current mapping of the key, or raises {!Not_found}. *)
 
@@ -23,6 +26,7 @@ module type S = sig
 
   val update : key -> ('a option -> 'a option) -> 'a t -> unit
   (** [update k f m] changes the mapping of [k] to [f (find_opt k m)].
+
     If [f (Some v)] returns [None], the mapping [v] is removed. *)
 
   val add : key -> 'a -> 'a t -> unit

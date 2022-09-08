@@ -45,6 +45,12 @@ module Make (H : Hashable) = struct
         };
     }
 
+  let rec clear t =
+    let startgen = Kcas.get t.root.gen in
+    let empty_mnode = CNode { bmp = 0l; array = [||] } in
+    if not @@ gen_dcss t.root (Kcas.get t.root.main) empty_mnode startgen then
+      clear t
+
   (** This is the only function that actually hashes keys.
       We try to use it as infrequently as possible. *)
   let hash_to_binary key =
@@ -211,7 +217,7 @@ module Make (H : Hashable) = struct
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
       (* Boolean return value to signal a mapping was deleted. *)
-      let rec aux i lvl parent =
+      let rec aux i lvl parent : bool =
         match Kcas.get i.main with
         | CNode cnode as cn ->
             let flag, pos = flagpos lvl cnode.bmp hashcode in
@@ -406,7 +412,7 @@ module Make (H : Hashable) = struct
     in
     { root = aux t.root }
 
-  let rec reduce_internal (array_fn, list_fn) f t =
+  let rec reduce (array_fn, list_fn) f t =
     let startgen = Kcas.get t.root.gen in
     let rec aux i lvl parent =
       match Kcas.get i.main with
@@ -418,14 +424,14 @@ module Make (H : Hashable) = struct
             cnode.array
       | TNode _ ->
           clean parent (lvl - 5) startgen;
-          reduce_internal (array_fn, list_fn) f t
+          reduce (array_fn, list_fn) f t
       | LNode list -> list_fn (fun { key; value } -> f key value) list
     in
     aux t.root 0 None
 
-  let exists pred = reduce_internal (Array.exists, List.exists) pred
-  let for_all pred = reduce_internal (Array.for_all, List.for_all) pred
-  let iter f = reduce_internal (Array.iter, List.iter) f
+  let exists pred = reduce (Array.exists, List.exists) pred
+  let for_all pred = reduce (Array.for_all, List.for_all) pred
+  let iter f = reduce (Array.iter, List.iter) f
 
   let rec fold (f : key -> 'a -> 'b -> 'b) (t : 'a t) (init : 'b) : 'b =
     let startgen = Kcas.get t.root.gen in
