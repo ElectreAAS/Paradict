@@ -6,6 +6,7 @@ module Make (H : Hashtbl.HashedType) = struct
     type key = H.t
     type at_root
     type not_root
+    type _ kind = At_root : at_root kind | Not_root : not_root kind
 
     type 'a t = { root : ('a, at_root) iNode }
 
@@ -31,7 +32,7 @@ module Make (H : Hashtbl.HashedType) = struct
     and 'a cNode = { bmp : Int32.t; array : 'a branch array }
 
     and _ branch =
-      | INode : ('a, 'r) iNode -> 'a branch
+      | INode : ('a, not_root) iNode -> 'a branch
       | Leaf : 'a leaf -> 'a branch
 
     and 'a leaf = { key : key; value : 'a }
@@ -118,19 +119,17 @@ module Make (H : Hashtbl.HashedType) = struct
     | TNode (Some l) | LNode [ l ] -> Some (Leaf l)
     | _ -> Some i
 
-  let contract : 'a cNode -> int -> ('a, not_root) mainNode =
-   fun cnode lvl ->
-    if lvl > 0 then
-      match Array.length cnode.array with
-      | 0 -> TNode None
-      | 1 -> (
-          match cnode.array.(0) with
-          | Leaf leaf -> TNode (Some leaf)
-          | _ -> CNode cnode)
-      | _ -> CNode cnode
-    else CNode cnode
+  let contract : type k. 'a cNode -> k kind -> ('a, k) mainNode =
+   fun cnode k ->
+    match (k, Array.length cnode.array) with
+    | Not_root, 0 -> TNode None
+    | Not_root, 1 -> (
+        match cnode.array.(0) with
+        | Leaf leaf -> TNode (Some leaf)
+        | _ -> CNode cnode)
+    | _ -> CNode cnode
 
-  let compress cnode lvl =
+  let compress k cnode =
     let array =
       Array.filter_map
         (function
@@ -138,21 +137,14 @@ module Make (H : Hashtbl.HashedType) = struct
           | INode i as inner -> resurrect inner (Kcas.get i.main))
         cnode.array
     in
-    contract { cnode with array } lvl
+    contract { cnode with array } k
 
-  let clean : type r. ('a, r) iNode -> int -> gen -> unit =
-   fun parent lvl startgen ->
-    (* match parent with
-       | None ->
-           (* no parent means it's the root, nothing to do as it cannot have a tnode child. *)
-           ()
-       | Some t -> *)
-    let x = match r with not_root -> failwith "wait" | _ -> failwith "todo" in
+  let clean k parent startgen =
     match Kcas.get parent.main with
     | CNode cnode as cn ->
         let _ignored =
           (* TODO: it is ignored in the paper, but investigate if that is really wise *)
-          gen_dcss parent cn (compress cnode lvl) startgen
+          gen_dcss parent cn (compress k cnode) startgen
         in
         ()
     | _ -> ()
@@ -191,8 +183,9 @@ module Make (H : Hashtbl.HashedType) = struct
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
       let rec aux :
-          type r1 r2. ('a, r1) iNode -> int -> ('a, r2) iNode option -> 'a =
-       fun i lvl parent ->
+          type r1 r2.
+          r2 kind -> ('a, r1) iNode -> int -> ('a, r2) iNode option -> 'a =
+       fun k i lvl parent ->
         match Kcas.get i.main with
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
@@ -201,8 +194,7 @@ module Make (H : Hashtbl.HashedType) = struct
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux inner (lvl + 5)
-                      (Some (* FIXME: this doesn't compile *) i)
+                    aux inner (lvl + 5) (Some i)
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
                   then aux i lvl parent
                   else loop ()
@@ -211,11 +203,15 @@ module Make (H : Hashtbl.HashedType) = struct
         | LNode lst ->
             let leaf = List.find (fun l -> H.equal l.key key) lst in
             leaf.value
-        | TNode _ ->
-            clean parent (lvl - 5) startgen;
-            loop ()
+        | TNode _ -> (
+            match parent with
+            | None ->
+                assert false (* FIXME: this is where the GADT magic happens *)
+            | Some p ->
+                clean p (lvl - 5) startgen;
+                loop ())
       in
-      aux t.root 0 None
+      aux At_root t.root 0 None
     in
     loop ()
 
