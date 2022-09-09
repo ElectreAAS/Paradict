@@ -4,8 +4,10 @@ include Paradict_intf
 module Make (H : Hashtbl.HashedType) = struct
   module Types = struct
     type key = H.t
+    type at_root
+    type not_root
 
-    type 'a t = { root : 'a iNode }
+    type 'a t = { root : ('a, at_root) iNode }
 
     and gen = < >
     (** The type of generations is an empty object.
@@ -16,15 +18,22 @@ module Make (H : Hashtbl.HashedType) = struct
         [x = y] is false but [x = z] is true.
         This avoids integer overflow and discarded gen objects will be garbage collected. *)
 
-    and 'a iNode = { main : 'a mainNode Kcas.ref; gen : gen Kcas.ref }
+    and ('a, 'r) iNode = {
+      main : ('a, 'r) mainNode Kcas.ref;
+      gen : gen Kcas.ref;
+    }
 
-    and 'a mainNode =
-      | CNode of 'a cNode
-      | TNode of 'a leaf option
-      | LNode of 'a leaf list
+    and (_, _) mainNode =
+      | CNode : 'a cNode -> ('a, 'r) mainNode
+      | TNode : 'a leaf option -> ('a, not_root) mainNode
+      | LNode : 'a leaf list -> ('a, not_root) mainNode
 
     and 'a cNode = { bmp : Int32.t; array : 'a branch array }
-    and 'a branch = INode of 'a iNode | Leaf of 'a leaf
+
+    and _ branch =
+      | INode : ('a, 'r) iNode -> 'a branch
+      | Leaf : 'a leaf -> 'a branch
+
     and 'a leaf = { key : key; value : 'a }
   end
 
@@ -165,7 +174,8 @@ module Make (H : Hashtbl.HashedType) = struct
     let hash = H.hash key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux i lvl parent =
+      let rec aux : type r. ('a, r) iNode -> int -> ('a, r) iNode option -> 'a =
+       fun i lvl parent ->
         match Kcas.get i.main with
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
@@ -174,7 +184,8 @@ module Make (H : Hashtbl.HashedType) = struct
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux inner (lvl + 5) (Some i)
+                    aux inner (lvl + 5)
+                      (Some (* FIXME: this doesn't compile *) i)
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
                   then aux i lvl parent
                   else loop ()
