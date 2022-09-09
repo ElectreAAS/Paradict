@@ -54,6 +54,19 @@ module Make (H : Hashtbl.HashedType) = struct
         };
     }
 
+  let create_complex k1 k2 =
+    let gen = Kcas.ref (object end) in
+    let t : (int, not_root) mainNode = TNode { key = k1; value = 0 } in
+    let i1 : int branch = INode { main = Kcas.ref t; gen } in
+    let c : (int, 'anything) mainNode =
+      CNode { bmp = 1l; array = [| Leaf { key = k2; value = 8 } |] }
+    in
+    let i2 : int branch = INode { main = Kcas.ref c; gen } in
+    let master_c : (int, at_root) mainNode =
+      CNode { bmp = 3l; array = [| i1; i2 |] }
+    in
+    { root = { gen; main = Kcas.ref master_c } }
+
   let rec clear t =
     let startgen = Kcas.get t.root.gen in
     let empty_mnode = CNode { bmp = 0l; array = [||] } in
@@ -105,7 +118,8 @@ module Make (H : Hashtbl.HashedType) = struct
     | TNode (Some l) | LNode [ l ] -> Some (Leaf l)
     | _ -> Some i
 
-  let contract cnode lvl =
+  let contract : 'a cNode -> int -> ('a, not_root) mainNode =
+   fun cnode lvl ->
     if lvl > 0 then
       match Array.length cnode.array with
       | 0 -> TNode None
@@ -126,20 +140,22 @@ module Make (H : Hashtbl.HashedType) = struct
     in
     contract { cnode with array } lvl
 
-  let clean parent lvl startgen =
-    match parent with
-    | None ->
-        (* no parent means it's the root, nothing to do as it cannot have a tnode child. *)
+  let clean : type r. ('a, r) iNode -> int -> gen -> unit =
+   fun parent lvl startgen ->
+    (* match parent with
+       | None ->
+           (* no parent means it's the root, nothing to do as it cannot have a tnode child. *)
+           ()
+       | Some t -> *)
+    let x = match r with not_root -> failwith "wait" | _ -> failwith "todo" in
+    match Kcas.get parent.main with
+    | CNode cnode as cn ->
+        let _ignored =
+          (* TODO: it is ignored in the paper, but investigate if that is really wise *)
+          gen_dcss parent cn (compress cnode lvl) startgen
+        in
         ()
-    | Some t -> (
-        match Kcas.get t.main with
-        | CNode cnode as cn ->
-            let _ignored =
-              (* TODO: it is ignored in the paper, but investigate if that is really wise *)
-              gen_dcss t cn (compress cnode lvl) startgen
-            in
-            ()
-        | _ -> ())
+    | _ -> ()
 
   let cnode_with_insert cnode leaf flag pos =
     let new_bitmap = Int32.logor cnode.bmp flag in
@@ -174,7 +190,8 @@ module Make (H : Hashtbl.HashedType) = struct
     let hash = H.hash key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux : type r. ('a, r) iNode -> int -> ('a, r) iNode option -> 'a =
+      let rec aux :
+          type r1 r2. ('a, r1) iNode -> int -> ('a, r2) iNode option -> 'a =
        fun i lvl parent ->
         match Kcas.get i.main with
         | CNode cnode as cn -> (
