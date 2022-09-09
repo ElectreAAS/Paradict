@@ -20,8 +20,6 @@
  (depends
   ocaml
   dune
-  ocaml_intrinsics
-  digestif
   (kcas
    (= dev))
   (domainslib :with-test)

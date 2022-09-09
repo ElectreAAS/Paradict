@@ -71,10 +71,8 @@ module Make (H : HashedType) = struct
       [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
   let flagpos lvl bitmap hashcode =
     let flag = hash_to_flag lvl hashcode in
-    let pos =
-      Ocaml_intrinsics.Int32.count_set_bits
-      @@ Int32.logand bitmap (Int32.pred flag)
-    in
+    let open Int32 in
+    let pos = popcount @@ logand bitmap (pred flag) in
     (flag, pos)
 
   let resurrect branch =
@@ -344,11 +342,7 @@ module Make (H : HashedType) = struct
           | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
         else aux (cursor + 1) bmp l_filtered seen
     in
-    let res =
-      aux
-        (Ocaml_intrinsics.Int32.count_trailing_zeros_nonzero_arg bmp)
-        bmp l_filtered 0
-    in
+    let res = aux 0 bmp l_filtered 0 in
     res
 
   let filter_map_inplace f t =
@@ -495,12 +489,8 @@ module Make (H : HashedType) = struct
     Printf.fprintf oc
       "digraph {\n\troot [shape=plaintext];\n\troot -> I0 [style=dotted];\n";
     let pr_cnode_info cnode =
-      let size = Int32.unsigned_to_int cnode.bmp in
-      let bmp = match size with Some n -> string_of_int n | None -> "..." in
-      Printf.fprintf oc "\tC%d [shape=record label=\"<bmp> %s" !ic bmp;
-      for i = 0 to Ocaml_intrinsics.Int32.count_set_bits cnode.bmp - 1 do
-        Printf.fprintf oc "|<i%d> ·" i
-      done;
+      Printf.fprintf oc "\tC%d [shape=record label=\"<bmp> 0x%lX" !ic cnode.bmp;
+      Array.iteri (fun i _ -> Printf.fprintf oc "|<i%d> ·" i) cnode.array;
       Printf.fprintf oc "\"];\n"
     in
     let pr_leaf_info leaf =

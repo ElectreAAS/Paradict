@@ -47,6 +47,19 @@ module List = struct
     aux l
 end
 
+module Int32 = struct
+  include Int32
+
+  let popcount n =
+    let rec aux n count =
+      if n = 0l then count
+      else
+        let shifted = shift_right_logical n 1 in
+        if logand 1l n <> 0l then aux shifted (count + 1) else aux shifted count
+    in
+    aux n 0
+end
+
 (** Ugly but there's nothing in the stdlib... *)
 let hex_to_binary s =
   let convert = function

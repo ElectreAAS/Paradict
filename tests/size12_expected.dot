@@ -2,11 +2,11 @@ digraph {
 	root [shape=plaintext];
 	root -> I0 [style=dotted];
 	I0 [style=filled shape=box color=green2];
-	C0 [shape=record label="<bmp> 33260|<i0> ·|<i1> ·|<i2> ·|<i3> ·|<i4> ·|<i5> ·|<i6> ·"];
+	C0 [shape=record label="<bmp> 0x81EC|<i0> ·|<i1> ·|<i2> ·|<i3> ·|<i4> ·|<i5> ·|<i6> ·"];
 	I0 -> C0:bmp;
 	C0:i0 -> I1;
 	I1 [style=filled shape=box color=green2];
-	C1 [shape=record label="<bmp> 16778240|<i0> ·|<i1> ·"];
+	C1 [shape=record label="<bmp> 0x1000400|<i0> ·|<i1> ·"];
 	I1 -> C1:bmp;
 	V0 [shape=Mrecord label="<key> Mario Kart DS|<val> 17" style=filled color=gold];
 	C1:i0 -> V0;
@@ -14,7 +14,7 @@ digraph {
 	C1:i1 -> V1;
 	C0:i1 -> I2;
 	I2 [style=filled shape=box color=green2];
-	C2 [shape=record label="<bmp> 1073873024|<i0> ·|<i1> ·|<i2> ·"];
+	C2 [shape=record label="<bmp> 0x40020080|<i0> ·|<i1> ·|<i2> ·"];
 	I2 -> C2:bmp;
 	V2 [shape=Mrecord label="<key> Hellblade|<val> 20" style=filled color=gold];
 	C2:i0 -> V2;
@@ -24,7 +24,7 @@ digraph {
 	C2:i2 -> V4;
 	C0:i2 -> I3;
 	I3 [style=filled shape=box color=green2];
-	C3 [shape=record label="<bmp> 33024|<i0> ·|<i1> ·"];
+	C3 [shape=record label="<bmp> 0x8100|<i0> ·|<i1> ·"];
 	I3 -> C3:bmp;
 	V5 [shape=Mrecord label="<key> Devil May Cry|<val> 0" style=filled color=gold];
 	C3:i0 -> V5;
@@ -34,7 +34,7 @@ digraph {
 	C0:i3 -> V7;
 	C0:i4 -> I4;
 	I4 [style=filled shape=box color=green2];
-	C4 [shape=record label="<bmp> 32800|<i0> ·|<i1> ·"];
+	C4 [shape=record label="<bmp> 0x8020|<i0> ·|<i1> ·"];
 	I4 -> C4:bmp;
 	V8 [shape=Mrecord label="<key> Skyrim|<val> 11" style=filled color=gold];
 	C4:i0 -> V8;
