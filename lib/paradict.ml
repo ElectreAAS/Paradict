@@ -1,7 +1,7 @@
 open Extensions
 include Paradict_intf
 
-module Make (H : Hashable) = struct
+module Make (H : HashedType) = struct
   module Types = struct
     type key = H.t
 
@@ -53,9 +53,7 @@ module Make (H : Hashable) = struct
 
   (** This is the only function that actually hashes keys.
       We try to use it as infrequently as possible. *)
-  let hash_to_binary key =
-    let open Digestif.SHA256 in
-    key |> H.to_string |> digest_string |> to_hex |> hex_to_binary
+  let hash_to_binary key = key |> H.hash |> Printf.sprintf "%x" |> hex_to_binary
 
   (* We only use 5 bits of the hashcode, depending on the level in the tree.
      Note that [lvl] is always a multiple of 5. (5 = log2 32) *)
@@ -150,10 +148,9 @@ module Make (H : Hashable) = struct
                   then aux i lvl parent
                   else loop ()
               | Leaf leaf ->
-                  if H.compare leaf.key key = 0 then leaf.value
-                  else raise Not_found)
+                  if H.equal leaf.key key then leaf.value else raise Not_found)
         | LNode lst ->
-            let leaf = List.find (fun l -> H.compare l.key key = 0) lst in
+            let leaf = List.find (fun l -> H.equal l.key key) lst in
             leaf.value
         | TNode _ ->
             clean parent (lvl - 5) startgen;
@@ -242,7 +239,7 @@ module Make (H : Hashable) = struct
                     then aux i lvl parent
                     else loop ()
                 | Leaf l -> (
-                    if H.compare l.key key = 0 then
+                    if H.equal l.key key then
                       match f (Some l.value) with
                       | Some value ->
                           (* We found a value to be updated. *)
@@ -286,7 +283,7 @@ module Make (H : Hashable) = struct
             loop ()
         | LNode lst as ln ->
             let new_list, changed =
-              List.remove_map (fun leaf -> H.compare leaf.key key = 0) lst
+              List.remove_map (fun leaf -> H.equal leaf.key key) lst
             in
             changed && (gen_dcss i ln (LNode new_list) startgen || loop ())
       in
@@ -478,7 +475,7 @@ module Make (H : Hashable) = struct
     in
     aux init t.root 0 None
 
-  let save_as_dot string_of_val t filename =
+  let save_as_dot (string_of_key, string_of_val) t filename =
     let oc = open_out filename in
     let ic = ref 0 in
     let il = ref 0 in
@@ -500,7 +497,7 @@ module Make (H : Hashable) = struct
       Printf.fprintf oc
         "\tV%d [shape=Mrecord label=\"<key> %s|<val> %s\" style=filled \
          color=gold];\n"
-        !iv (H.to_string leaf.key) (string_of_val leaf.value)
+        !iv (string_of_key leaf.key) (string_of_val leaf.value)
     in
     let rec pr_inode inode =
       let self = !ii in

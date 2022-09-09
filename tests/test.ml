@@ -1,8 +1,8 @@
 open Paradict.Make (struct
   type t = string
 
-  let compare = compare
-  let to_string = Fun.id
+  let equal = ( = )
+  let hash s = Hashtbl.hash s
 end)
 
 let mem_empty =
@@ -279,7 +279,7 @@ let save_single =
   Alcotest.test_case "save singleton trie" `Quick @@ fun () ->
   let scores = create () in
   add "Subnautica" 3 scores;
-  save_as_dot string_of_int scores "singleton.dot";
+  save_as_dot (Fun.id, string_of_int) scores "singleton.dot";
   let gotten_ic = open_in "singleton.dot" in
   let expect_ic = open_in "../../../tests/singleton_expected.dot" in
   let eof = ref true in
@@ -309,7 +309,7 @@ let save_12 =
   add "Hollow Knight" 20 scores;
   add "Cult of the Lamb" 800 scores;
   add "Hellblade" 20 scores;
-  save_as_dot string_of_int scores "size12.dot";
+  save_as_dot (Fun.id, string_of_int) scores "size12.dot";
   let gotten_ic = open_in "size12.dot" in
   let expect_ic = open_in "../../../tests/size12_expected.dot" in
   let eof = ref true in

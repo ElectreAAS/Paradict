@@ -1,8 +1,8 @@
-module type Hashable = sig
+module type HashedType = sig
   type t
 
-  val compare : t -> t -> int
-  val to_string : t -> string
+  val equal : t -> t -> bool
+  val hash : t -> int
 end
 
 module type S = sig
@@ -77,16 +77,16 @@ module type S = sig
   val for_all : (key -> 'a -> bool) -> 'a t -> bool
   (** Check that all (key, value) pairs satisfy the predicate. *)
 
-  val save_as_dot : ('a -> string) -> 'a t -> string -> unit
+  val save_as_dot : (key -> string) * ('a -> string) -> 'a t -> string -> unit
   (** Save the map as a graph in a .dot file.
 
       Mainly for debugging purposes. *)
 end
 
-module type Make = functor (H : Hashable) -> S with type key = H.t
+module type Make = functor (H : HashedType) -> S with type key = H.t
 
 module type Intf = sig
-  module type Hashable = Hashable
+  module type HashedType = HashedType
   module type S = S
 
   module Make : Make

@@ -4,8 +4,8 @@ let max_domains = try int_of_string Sys.argv.(2) with _ -> 8
 module P = Paradict.Make (struct
   type t = int
 
-  let compare = Int.compare
-  let to_string = string_of_int
+  let equal = ( = )
+  let hash t = Hashtbl.hash t
 end)
 
 let bench name metric f =
