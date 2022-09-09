@@ -351,89 +351,99 @@ module Make (H : HashedType) = struct
     in
     res
 
-  let rec filter_map_inplace f t =
-    let startgen = Kcas.get t.root.gen in
-    let rec aux i lvl parent =
-      match Kcas.get i.main with
-      | CNode cnode as cn -> (
-          let rec filter_cnode l_mapped l_filtered pos =
-            if pos < 0 then
-              match l_mapped with
-              | [] ->
-                  (* The entirety of the cnode contents was filtered *)
-                  None
-              | [ Leaf l ] when lvl > 0 -> Some (TNode l)
-              | _ ->
-                  let array = Array.of_list l_mapped in
-                  let bmp = remove_from_bitmap cnode.bmp l_filtered in
-                  Some (CNode { bmp; array })
-            else
-              match cnode.array.(pos) with
-              | Leaf { key; value } -> (
+  let filter_map_inplace f t =
+    let rec loop () =
+      let startgen = Kcas.get t.root.gen in
+      let rec aux i lvl parent =
+        match Kcas.get i.main with
+        | CNode cnode as cn -> (
+            let rec filter_cnode l_mapped l_filtered pos =
+              if pos < 0 then
+                match l_mapped with
+                | [] ->
+                    (* The entirety of the cnode contents was filtered *)
+                    None
+                | [ Leaf l ] when lvl > 0 -> Some (TNode l)
+                | _ ->
+                    let array = Array.of_list l_mapped in
+                    let bmp = remove_from_bitmap cnode.bmp l_filtered in
+                    Some (CNode { bmp; array })
+              else
+                match cnode.array.(pos) with
+                | Leaf { key; value } -> (
+                    match f key value with
+                    | Some value ->
+                        filter_cnode
+                          (Leaf { key; value } :: l_mapped)
+                          l_filtered (pos - 1)
+                    | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1)
+                    )
+                | INode inner -> (
+                    match aux inner (lvl + 5) (Some i) with
+                    | Some branch ->
+                        filter_cnode (branch :: l_mapped) l_filtered (pos - 1)
+                    | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1)
+                    )
+            in
+            let new_main_node =
+              filter_cnode [] [] (Array.length cnode.array - 1)
+            in
+            match new_main_node with
+            | Some (TNode l) -> Some (Leaf l)
+            | Some mainnode ->
+                if gen_dcss i cn mainnode startgen then Some (INode i)
+                else loop ()
+            | None -> None)
+        | TNode _ ->
+            clean parent (lvl - 5) startgen;
+            loop ()
+        | LNode list as ln ->
+            let new_list =
+              List.filter_map
+                (fun { key; value } ->
                   match f key value with
-                  | Some value ->
-                      filter_cnode
-                        (Leaf { key; value } :: l_mapped)
-                        l_filtered (pos - 1)
-                  | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1))
-              | INode inner -> (
-                  match aux inner (lvl + 5) (Some i) with
-                  | Some branch ->
-                      filter_cnode (branch :: l_mapped) l_filtered (pos - 1)
-                  | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1))
-          in
-          let new_main_node =
-            filter_cnode [] [] (Array.length cnode.array - 1)
-          in
-          match new_main_node with
-          | Some (TNode l) -> Some (Leaf l)
-          | Some mainnode ->
-              if gen_dcss i cn mainnode startgen then Some (INode i)
-              else raise Exit
-          | None -> None)
-      | TNode _ ->
-          clean parent (lvl - 5) startgen;
-          raise Exit
-      | LNode list as ln ->
-          let new_list =
-            List.filter_map
-              (fun { key; value } ->
-                match f key value with
-                | Some value -> Some { key; value }
-                | None -> None)
-              list
-          in
-          if gen_dcss i ln (LNode new_list) startgen then Some (INode i)
-          else raise Exit
+                  | Some value -> Some { key; value }
+                  | None -> None)
+                list
+            in
+            if gen_dcss i ln (LNode new_list) startgen then Some (INode i)
+            else loop ()
+      in
+      aux t.root 0 None
     in
-    try ignore @@ aux t.root 0 None with Exit -> filter_map_inplace f t
+    ignore (loop ())
 
   let map f t =
-    let startgen = Kcas.get t.root.gen in
-    let rec aux i =
-      match Kcas.get i.main with
-      | CNode cnode ->
-          let array =
-            Array.map
-              (function
-                | INode inner -> INode (aux inner)
-                | Leaf { key; value } -> Leaf { key; value = f key value })
-              cnode.array
-          in
-          {
-            main = Kcas.ref @@ CNode { cnode with array };
-            gen = Kcas.ref startgen;
-          }
-      | TNode _ -> failwith "TODO: finish this if necessary"
-      | LNode list ->
-          let new_list =
-            List.map
-              (function { key; value } -> { key; value = f key value })
-              list
-          in
-          { main = Kcas.ref @@ LNode new_list; gen = Kcas.ref startgen }
+    let rec loop () =
+      let startgen = Kcas.get t.root.gen in
+      let rec aux i lvl parent =
+        match Kcas.get i.main with
+        | CNode cnode ->
+            let array =
+              Array.map
+                (function
+                  | INode inner -> INode (aux inner (lvl + 5) (Some i))
+                  | Leaf { key; value } -> Leaf { key; value = f key value })
+                cnode.array
+            in
+            {
+              main = Kcas.ref @@ CNode { cnode with array };
+              gen = Kcas.ref startgen;
+            }
+        | TNode _ ->
+            clean parent (lvl - 5) startgen;
+            loop ()
+        | LNode list ->
+            let new_list =
+              List.map
+                (function { key; value } -> { key; value = f key value })
+                list
+            in
+            { main = Kcas.ref @@ LNode new_list; gen = Kcas.ref startgen }
+      in
+      aux t.root 0 None
     in
-    { root = aux t.root }
+    { root = loop () }
 
   let rec reduce (array_fn, list_fn) f t =
     let startgen = Kcas.get t.root.gen in
