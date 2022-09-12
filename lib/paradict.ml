@@ -51,27 +51,21 @@ module Make (H : Hashtbl.HashedType) = struct
     if not @@ gen_dcss t.root (Kcas.get t.root.main) empty_mnode startgen then
       clear t
 
-  (** This is the only function that actually hashes keys.
-      We try to use it as infrequently as possible. *)
-  let hash_to_binary key =
-    key |> H.hash |> Printf.sprintf "%08x" |> hex_to_binary
-
-  (* We only use 5 bits of the hashcode, depending on the level in the tree.
+  (* We only use 5 bits of the hash, depending on the level in the tree.
      Note that [lvl] is always a multiple of 5. (5 = log2 32) *)
-  let hash_to_flag lvl hashcode =
-    try
-      let relevant = String.sub hashcode lvl 5 in
-      let to_shift = int_of_string ("0b" ^ relevant) in
-      Some (Int32.shift_left 1l to_shift)
-    with Invalid_argument _ ->
-      (* Invalid argument means the lvl is too high for String.sub. *)
-      None
+  let hash_to_flag lvl hash =
+    if lvl > Sys.int_size then None
+    else
+      let mask = 0x1F in
+      let shifted = hash lsr lvl in
+      let relevant = shifted land mask in
+      Some (Int32.shift_left 1l relevant)
 
   (** [flag] is a single bit flag (never 0)
 
       [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
-  let flagpos lvl bitmap hashcode =
-    match hash_to_flag lvl hashcode with
+  let flagpos lvl bitmap hash =
+    match hash_to_flag lvl hash with
     | Some flag ->
         let open Int32 in
         let pos = popcount @@ logand bitmap (pred flag) in
@@ -132,13 +126,13 @@ module Make (H : Hashtbl.HashedType) = struct
     | _ -> true
 
   let find key t =
-    let hashcode = hash_to_binary key in
+    let hash = H.hash key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
       let rec aux i lvl parent =
         match Kcas.get i.main with
         | CNode cnode as cn -> (
-            let flag, pos = flagpos lvl cnode.bmp hashcode in
+            let flag, pos = flagpos lvl cnode.bmp hash in
             if Int32.logand flag cnode.bmp = 0l then raise Not_found
             else
               match cnode.array.(pos) with
@@ -186,14 +180,14 @@ module Make (H : Hashtbl.HashedType) = struct
     in
     INode { main = Kcas.ref @@ new_main_node; gen = Kcas.ref gen }
 
-  let rec clean_parent parent i hashcode lvl startgen =
+  let rec clean_parent parent i hash lvl startgen =
     if Kcas.get i.gen <> startgen then ()
     else
       let main = Kcas.get i.main in
       let p_main = Kcas.get parent.main in
       match p_main with
       | CNode cnode as cn -> (
-          let flag, pos = flagpos lvl cnode.bmp hashcode in
+          let flag, pos = flagpos lvl cnode.bmp hash in
           if Int32.logand flag cnode.bmp <> 0l && cnode.array.(pos) = INode i
           then
             match main with
@@ -202,7 +196,7 @@ module Make (H : Hashtbl.HashedType) = struct
                   cnode_with_update cnode pos (resurrect (INode i))
                 in
                 if not @@ gen_dcss parent cn (contract new_cnode lvl) startgen
-                then clean_parent parent i hashcode lvl startgen
+                then clean_parent parent i hash lvl startgen
             | _ -> ())
       | _ -> ()
 
@@ -212,14 +206,14 @@ module Make (H : Hashtbl.HashedType) = struct
     { bmp; array }
 
   let update key f t =
-    let hashcode = hash_to_binary key in
+    let hash = H.hash key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
       (* Boolean return value to signal a mapping was deleted. *)
       let rec aux i lvl parent : bool =
         match Kcas.get i.main with
         | CNode cnode as cn ->
-            let flag, pos = flagpos lvl cnode.bmp hashcode in
+            let flag, pos = flagpos lvl cnode.bmp hash in
             if Int32.logand flag cnode.bmp = 0l then
               (* No flag collision, the key isn't in the map. *)
               match f None with
@@ -261,8 +255,8 @@ module Make (H : Hashtbl.HashedType) = struct
                           (* We create a new entry colliding with a leaf, so we create a new level. *)
                           let new_pair =
                             branch_of_pair
-                              (l, hash_to_binary l.key)
-                              ({ key; value }, hashcode)
+                              (l, H.hash l.key)
+                              ({ key; value }, hash)
                               (lvl + 5) startgen
                           in
                           let new_cnode =
@@ -276,7 +270,7 @@ module Make (H : Hashtbl.HashedType) = struct
               (if leaf_removed then
                match (Kcas.get i.main, parent) with
                | TNode _, Some parent ->
-                   clean_parent parent i hashcode (lvl - 5) startgen
+                   clean_parent parent i hash (lvl - 5) startgen
                (* 'parent = None' means i is the root, and the root cannot have a TNode child. *)
                | _ -> ());
               leaf_removed
@@ -305,8 +299,7 @@ module Make (H : Hashtbl.HashedType) = struct
             | [ l ] ->
                 if gen_dcss i ln (TNode l) startgen then (
                   (match parent with
-                  | Some parent ->
-                      clean_parent parent i hashcode (lvl - 5) startgen
+                  | Some parent -> clean_parent parent i hash (lvl - 5) startgen
                   | None -> ());
                   changed)
                 else loop ()
