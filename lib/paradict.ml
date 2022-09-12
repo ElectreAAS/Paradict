@@ -8,6 +8,10 @@ module Make (H : Hashtbl.HashedType) = struct
     type not_root
     type _ kind = At_root : at_root kind | Not_root : not_root kind
 
+    type (_, _) koption =
+      | KSome : 'a -> ('a, 'r) koption
+      | KNone : ('a, at_root) koption
+
     type 'a t = { root : ('a, at_root) iNode }
 
     and gen = < >
@@ -30,18 +34,17 @@ module Make (H : Hashtbl.HashedType) = struct
       | LNode : 'a leaf list -> ('a, not_root) mainNode
 
     and 'a cNode = { bmp : Int32.t; array : 'a branch array }
-
-    and _ branch =
-      | INode : ('a, not_root) iNode -> 'a branch
-      | Leaf : 'a leaf -> 'a branch
-
+    and 'a branch = INode of ('a, not_root) iNode | Leaf of 'a leaf
     and 'a leaf = { key : key; value : 'a }
   end
 
   include Types
 
   (** Generational Double Compare Single Swap *)
-  let gen_dcss inode old_m new_m gen =
+  let gen_dcss :
+      type r.
+      ('a, r) iNode -> ('a, r) mainNode -> ('a, r) mainNode -> gen -> bool =
+   fun inode old_m new_m gen ->
     let cas = Kcas.mk_cas inode.main old_m new_m in
     let atomic_read = Kcas.mk_cas inode.gen gen gen in
     Kcas.kCAS [ cas; atomic_read ]
@@ -59,7 +62,7 @@ module Make (H : Hashtbl.HashedType) = struct
     let gen = Kcas.ref (object end) in
     let t : (int, not_root) mainNode = TNode { key = k1; value = 0 } in
     let i1 : int branch = INode { main = Kcas.ref t; gen } in
-    let c : (int, 'anything) mainNode =
+    let c : (int, not_root) mainNode =
       CNode { bmp = 1l; array = [| Leaf { key = k2; value = 8 } |] }
     in
     let i2 : int branch = INode { main = Kcas.ref c; gen } in
@@ -95,56 +98,31 @@ module Make (H : Hashtbl.HashedType) = struct
         (flag, pos)
     | None -> failwith "Maximum depth reached but flagpos was still used???"
 
-  (* This function assumes l_filtered is sorted and it only contains valid indexes *)
-  let remove_from_bitmap bmp l_filtered =
-    let rec aux cursor bmp l_filtered seen =
-      if cursor >= 32 then bmp
-      else
-        let bit = Int32.shift_left 1l cursor in
-        let flag = Int32.logand bit bmp in
-        if flag <> 0l then
-          match l_filtered with
-          | x :: xs when x = seen ->
-              aux (cursor + 1)
-                (Int32.logand bmp (Int32.lognot flag))
-                xs (seen + 1)
-          | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
-        else aux (cursor + 1) bmp l_filtered seen
-    in
-    let res = aux 0 bmp l_filtered 0 in
-    res
+  let resurrect branch =
+    match branch with
+    | Leaf _ -> branch
+    | INode i -> (
+        match Kcas.get i.main with TNode leaf -> Leaf leaf | _ -> branch)
 
-  let resurrect i = function
-    | TNode None | LNode [] -> None
-    | TNode (Some l) | LNode [ l ] -> Some (Leaf l)
-    | _ -> Some i
-
-  let contract : type k. 'a cNode -> k kind -> ('a, k) mainNode =
-   fun cnode k ->
-    match (k, Array.length cnode.array) with
-    | Not_root, 0 -> TNode None
-    | Not_root, 1 -> (
-        match cnode.array.(0) with
-        | Leaf leaf -> TNode (Some leaf)
-        | _ -> CNode cnode)
+  let contract : type k. k kind -> 'a cNode -> ('a, k) mainNode =
+   fun k cnode ->
+    match k with
+    | Not_root when Array.length cnode.array = 1 -> (
+        match cnode.array.(0) with Leaf leaf -> TNode leaf | _ -> CNode cnode)
     | _ -> CNode cnode
 
   let compress k cnode =
-    let array =
-      Array.filter_map
-        (function
-          | Leaf _ as l -> Some l
-          | INode i as inner -> resurrect inner (Kcas.get i.main))
-        cnode.array
-    in
-    contract { cnode with array } k
+    let array = Array.map resurrect cnode.array in
+    contract k { cnode with array }
 
-  let clean k parent startgen =
+  let clean
+      (* : type k. k kind -> ('a, k) iNode -> gen -> unit =
+         fun *) k parent startgen =
     match Kcas.get parent.main with
     | CNode cnode as cn ->
         let _ignored =
           (* TODO: it is ignored in the paper, but investigate if that is really wise *)
-          gen_dcss parent cn (compress k cnode) startgen
+          gen_dcss i cn (compress cnode k) gen
         in
         ()
     | _ -> ()
@@ -184,8 +162,8 @@ module Make (H : Hashtbl.HashedType) = struct
       let startgen = Kcas.get t.root.gen in
       let rec aux :
           type r1 r2.
-          r2 kind -> ('a, r1) iNode -> int -> ('a, r2) iNode option -> 'a =
-       fun k i lvl parent ->
+          ('a, r1) iNode -> int -> (('a, r2) iNode, r1) koption -> 'a =
+       fun i lvl parent ->
         match Kcas.get i.main with
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
@@ -194,7 +172,7 @@ module Make (H : Hashtbl.HashedType) = struct
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux inner (lvl + 5) (Some i)
+                    aux inner (lvl + 5) (KSome i)
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
                   then aux i lvl parent
                   else loop ()
@@ -205,13 +183,12 @@ module Make (H : Hashtbl.HashedType) = struct
             leaf.value
         | TNode _ -> (
             match parent with
-            | None ->
-                assert false (* FIXME: this is where the GADT magic happens *)
-            | Some p ->
-                clean p (lvl - 5) startgen;
+            | KNone -> . (* FIXME: this is where the GADT magic happens *)
+            | KSome p ->
+                clean p (failwith "TODO") startgen;
                 loop ())
       in
-      aux At_root t.root 0 None
+      aux t.root 0 KNone
     in
     loop ()
 
