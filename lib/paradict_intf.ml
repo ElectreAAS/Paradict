@@ -1,10 +1,3 @@
-module type HashedType = sig
-  type t
-
-  val equal : t -> t -> bool
-  val hash : t -> int
-end
-
 module type S = sig
   type key
   type 'a t
@@ -83,10 +76,9 @@ module type S = sig
       Mainly for debugging purposes. *)
 end
 
-module type Make = functor (H : HashedType) -> S with type key = H.t
+module type Make = functor (H : Hashtbl.HashedType) -> S with type key = H.t
 
 module type Intf = sig
-  module type HashedType = HashedType
   module type S = S
 
   module Make : Make

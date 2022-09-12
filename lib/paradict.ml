@@ -1,7 +1,7 @@
 open Extensions
 include Paradict_intf
 
-module Make (H : HashedType) = struct
+module Make (H : Hashtbl.HashedType) = struct
   module Types = struct
     type key = H.t
 
@@ -203,7 +203,7 @@ module Make (H : HashedType) = struct
       | _ -> ()
 
   let cnode_with_delete cnode pos flag =
-    let bmp = Int32.logand cnode.bmp (Int32.lognot flag) in
+    let bmp = Int32.logxor cnode.bmp flag in
     let array = Array.remove cnode.array pos in
     { bmp; array }
 
@@ -536,6 +536,7 @@ module Make (H : HashedType) = struct
       iv := !iv + 1;
       it := !it + 1
     and pr_list list =
+      Printf.fprintf oc "\tL%d [style=filled fontcolor=white color=red];\n" !il;
       List.iter
         (fun l ->
           pr_leaf_info l;
