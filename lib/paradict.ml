@@ -166,7 +166,7 @@ module Make (H : HashedType) = struct
     let flag2 = hash_to_flag lvl h2 in
     let bmp = Int32.logor flag1 flag2 in
     let new_main_node =
-      if bmp = 0l then
+      if Int32.logand flag1 flag2 <> 0l then
         (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
         LNode [ l1; l2 ]
       else
