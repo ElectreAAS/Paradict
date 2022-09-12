@@ -9,7 +9,7 @@ module Make (H : Hashtbl.HashedType) = struct
     type _ kind = At_root : at_root kind | Not_root : not_root kind
 
     type (_, _) koption =
-      | KSome : 'a -> ('a, 'r) koption
+      | KSome : 'a -> ('a, not_root) koption
       | KNone : ('a, at_root) koption
 
     type 'a t = { root : ('a, at_root) iNode }
