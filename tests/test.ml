@@ -157,12 +157,13 @@ let size_empty =
 let collisions = [ collision_mem; size_empty ]
 
 let para_add_mem =
+  let nb = 64 in
   let add_bunch map i =
-    for j = 0 to 64 do
-      add (Format.sprintf "(%d, %d)" i j) 0 map
+    for j = 0 to nb do
+      add (Format.sprintf "(%d, %d)" i j) (j, i) map
     done;
     let all = ref true in
-    for j = 0 to 64 do
+    for j = 0 to nb do
       all := !all && mem (Format.sprintf "(%d, %d)" i j) map
     done;
     !all
@@ -181,7 +182,7 @@ let para_add_mem =
 let para_add_then_mem =
   let add_bunch map i =
     for j = 0 to 64 do
-      add (Format.sprintf "(%d, %d)" i j) 0 map
+      add (Format.sprintf "(%d, %d)" i j) (i, j) map
     done
   in
   Alcotest.test_case "adds then mem" `Quick @@ fun () ->

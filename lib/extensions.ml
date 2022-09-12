@@ -25,15 +25,6 @@ end
 module List = struct
   include List
 
-  (** Remove the first element such that pred elem is true, returning the new list and a boolean marking if the element was deleted or not *)
-  let rec remove_map pred = function
-    | [] -> ([], false)
-    | x :: xs ->
-        if pred x then (xs, true)
-        else
-          let filtered, res = remove_map pred xs in
-          (x :: filtered, res)
-
   let print pp l =
     let fmt = Format.std_formatter in
     let rec aux = function
