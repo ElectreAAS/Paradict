@@ -53,7 +53,8 @@ module Make (H : Hashtbl.HashedType) = struct
 
   (** This is the only function that actually hashes keys.
       We try to use it as infrequently as possible. *)
-  let hash_to_binary key = key |> H.hash |> Printf.sprintf "%x" |> hex_to_binary
+  let hash_to_binary key =
+    key |> H.hash |> Printf.sprintf "%08x" |> hex_to_binary
 
   (* We only use 5 bits of the hashcode, depending on the level in the tree.
      Note that [lvl] is always a multiple of 5. (5 = log2 32) *)
@@ -61,19 +62,21 @@ module Make (H : Hashtbl.HashedType) = struct
     try
       let relevant = String.sub hashcode lvl 5 in
       let to_shift = int_of_string ("0b" ^ relevant) in
-      Int32.shift_left 1l to_shift
+      Some (Int32.shift_left 1l to_shift)
     with Invalid_argument _ ->
       (* Invalid argument means the lvl is too high for String.sub. *)
-      Int32.zero
+      None
 
   (** [flag] is a single bit flag (never 0)
 
       [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
   let flagpos lvl bitmap hashcode =
-    let flag = hash_to_flag lvl hashcode in
-    let open Int32 in
-    let pos = popcount @@ logand bitmap (pred flag) in
-    (flag, pos)
+    match hash_to_flag lvl hashcode with
+    | Some flag ->
+        let open Int32 in
+        let pos = popcount @@ logand bitmap (pred flag) in
+        (flag, pos)
+    | None -> failwith "Maximum depth reached but flagpos was still used???"
 
   let resurrect branch =
     match branch with
@@ -164,21 +167,22 @@ module Make (H : Hashtbl.HashedType) = struct
   let rec branch_of_pair (l1, h1) (l2, h2) lvl gen =
     let flag1 = hash_to_flag lvl h1 in
     let flag2 = hash_to_flag lvl h2 in
-    let bmp = Int32.logor flag1 flag2 in
     let new_main_node =
-      if Int32.logand flag1 flag2 <> 0l then
-        (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
-        LNode [ l1; l2 ]
-      else
-        let array =
-          match Int32.unsigned_compare flag1 flag2 with
-          | 0 ->
-              (* Collision on this level, we need to go deeper *)
-              [| branch_of_pair (l1, h1) (l2, h2) (lvl + 5) gen |]
-          | 1 -> [| Leaf l2; Leaf l1 |]
-          | _ -> [| Leaf l1; Leaf l2 |]
-        in
-        CNode { bmp; array }
+      match (flag1, flag2) with
+      | Some flag1, Some flag2 ->
+          let bmp = Int32.logor flag1 flag2 in
+          let array =
+            match Int32.unsigned_compare flag1 flag2 with
+            | 0 ->
+                (* Collision on this level, we need to go deeper *)
+                [| branch_of_pair (l1, h1) (l2, h2) (lvl + 5) gen |]
+            | 1 -> [| Leaf l2; Leaf l1 |]
+            | _ -> [| Leaf l1; Leaf l2 |]
+          in
+          CNode { bmp; array }
+      | _ ->
+          (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
+          LNode [ l1; l2 ]
     in
     INode { main = Kcas.ref @@ new_main_node; gen = Kcas.ref gen }
 
@@ -235,7 +239,7 @@ module Make (H : Hashtbl.HashedType) = struct
                       aux inner (lvl + 5) (Some i)
                     else if regenerate i cn pos (Kcas.get inner.main) startgen
                     then aux i lvl parent
-                    else loop ()
+                    else raise Exit
                 | Leaf l -> (
                     if H.equal l.key key then
                       match f (Some l.value) with
@@ -245,12 +249,12 @@ module Make (H : Hashtbl.HashedType) = struct
                             cnode_with_update cnode pos (Leaf { key; value })
                           in
                           if gen_dcss i cn (CNode new_cnode) startgen then false
-                          else loop ()
+                          else raise Exit
                       | None ->
                           (* We need to remove this value *)
                           let new_cnode = cnode_with_delete cnode pos flag in
                           let contracted = contract new_cnode lvl in
-                          gen_dcss i cn contracted startgen || loop ()
+                          gen_dcss i cn contracted startgen || raise Exit
                     else
                       match f None with
                       | Some value ->
@@ -265,7 +269,7 @@ module Make (H : Hashtbl.HashedType) = struct
                             cnode_with_update cnode pos new_pair
                           in
                           if gen_dcss i cn (CNode new_cnode) startgen then false
-                          else loop ()
+                          else raise Exit
                       (* The key isn't in the map. *)
                       | None -> false)
               in
@@ -279,13 +283,38 @@ module Make (H : Hashtbl.HashedType) = struct
         | TNode _ ->
             clean parent (lvl - 5) startgen;
             loop ()
-        | LNode lst as ln ->
-            let new_list, changed =
-              List.remove_map (fun leaf -> H.equal leaf.key key) lst
+        | LNode lst as ln -> (
+            let rec update_list = function
+              | [] -> (
+                  match f None with
+                  | None -> ([], false)
+                  | Some v -> ([ { key; value = v } ], false))
+              | x :: xs ->
+                  if H.equal x.key key then
+                    match f (Some x.value) with
+                    | Some v -> ({ key; value = v } :: xs, false)
+                    | None -> (xs, true)
+                  else
+                    let updated, changed = update_list xs in
+                    (x :: updated, changed)
             in
-            changed && (gen_dcss i ln (LNode new_list) startgen || loop ())
+            let new_list, changed = update_list lst in
+            match new_list with
+            | [] ->
+                failwith "Empty list after deletion, this should never happen."
+            | [ l ] ->
+                if gen_dcss i ln (TNode l) startgen then (
+                  (match parent with
+                  | Some parent ->
+                      clean_parent parent i hashcode (lvl - 5) startgen
+                  | None -> ());
+                  changed)
+                else loop ()
+            | _ :: _ ->
+                if gen_dcss i ln (LNode new_list) startgen then changed
+                else loop ())
       in
-      aux t.root 0 None
+      try aux t.root 0 None with Exit -> loop ()
     in
     ignore (loop ())
 
@@ -306,7 +335,9 @@ module Make (H : Hashtbl.HashedType) = struct
   let copy = snapshot
 
   let is_empty t =
-    match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l | _ -> false
+    match Kcas.get t.root.main with
+    | CNode cnode -> cnode.bmp = 0l
+    | _ -> failwith "non cnode at root"
 
   let rec size t =
     let startgen = Kcas.get t.root.gen in
