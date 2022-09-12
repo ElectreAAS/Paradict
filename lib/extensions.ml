@@ -50,28 +50,3 @@ module Int32 = struct
     in
     aux n 0
 end
-
-(** Ugly but there's nothing in the stdlib... *)
-let hex_to_binary s =
-  let convert = function
-    | '0' -> "0000"
-    | '1' -> "0001"
-    | '2' -> "0010"
-    | '3' -> "0011"
-    | '4' -> "0100"
-    | '5' -> "0101"
-    | '6' -> "0110"
-    | '7' -> "0111"
-    | '8' -> "1000"
-    | '9' -> "1001"
-    | 'a' | 'A' -> "1010"
-    | 'b' | 'B' -> "1011"
-    | 'c' | 'C' -> "1100"
-    | 'd' | 'D' -> "1101"
-    | 'e' | 'E' -> "1110"
-    | 'f' | 'F' -> "1111"
-    | c ->
-        raise
-        @@ Invalid_argument ("Invalid hexadecimal character: " ^ Char.escaped c)
-  in
-  String.fold_left (fun bin c -> bin ^ convert c) "" s
