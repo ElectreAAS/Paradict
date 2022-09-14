@@ -20,7 +20,7 @@ module Make (H : Hashtbl.HashedType) = struct
 
     and 'a mainNode =
       | CNode of 'a cNode
-      | TNode of 'a leaf
+      | TNode of 'a leaf option
       | LNode of 'a leaf list
 
     and 'a cNode = { bmp : Int32.t; array : 'a branch array }
@@ -72,19 +72,49 @@ module Make (H : Hashtbl.HashedType) = struct
         (flag, pos)
     | None -> failwith "Maximum depth reached but flagpos was still used???"
 
-  let resurrect branch =
-    match branch with
-    | Leaf _ -> branch
-    | INode i -> (
-        match Kcas.get i.main with TNode leaf -> Leaf leaf | _ -> branch)
+  (* This function assumes l_filtered is sorted and it only contains valid indexes *)
+  let remove_from_bitmap bmp l_filtered =
+    let rec aux cursor bmp l_filtered seen =
+      if cursor >= 32 then bmp
+      else
+        let bit = Int32.shift_left 1l cursor in
+        let flag = Int32.logand bit bmp in
+        if flag <> 0l then
+          match l_filtered with
+          | x :: xs when x = seen ->
+              aux (cursor + 1)
+                (Int32.logand bmp (Int32.lognot flag))
+                xs (seen + 1)
+          | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
+        else aux (cursor + 1) bmp l_filtered seen
+    in
+    let res = aux 0 bmp l_filtered 0 in
+    res
+
+  let resurrect i = function
+    | TNode None | LNode [] -> None
+    | TNode (Some l) | LNode [ l ] -> Some (Leaf l)
+    | _ -> Some i
 
   let contract cnode lvl =
-    if lvl > 0 && Array.length cnode.array = 1 then
-      match cnode.array.(0) with Leaf leaf -> TNode leaf | _ -> CNode cnode
+    if lvl > 0 then
+      match Array.length cnode.array with
+      | 0 -> TNode None
+      | 1 -> (
+          match cnode.array.(0) with
+          | Leaf leaf -> TNode (Some leaf)
+          | _ -> CNode cnode)
+      | _ -> CNode cnode
     else CNode cnode
 
   let compress cnode lvl =
-    let array = Array.map resurrect cnode.array in
+    let array =
+      Array.filter_map
+        (function
+          | Leaf _ as l -> Some l
+          | INode i as inner -> resurrect inner (Kcas.get i.main))
+        cnode.array
+    in
     contract { cnode with array } lvl
 
   let clean parent lvl startgen =
@@ -197,9 +227,11 @@ module Make (H : Hashtbl.HashedType) = struct
           if Int32.logand flag cnode.bmp <> 0l && cnode.array.(pos) = INode i
           then
             match main with
-            | TNode _ ->
+            | TNode _ | LNode ([] | [ _ ]) ->
                 let new_cnode =
-                  cnode_with_update cnode pos (resurrect (INode i))
+                  match resurrect (INode i) main with
+                  | Some resurrected -> cnode_with_update cnode resurrected pos
+                  | None -> cnode_with_delete cnode flag pos
                 in
                 if not @@ gen_dcss parent cn (contract new_cnode lvl) startgen
                 then clean_parent parent i hash lvl startgen
@@ -270,7 +302,7 @@ module Make (H : Hashtbl.HashedType) = struct
               in
               (if leaf_removed then
                match (Kcas.get i.main, parent) with
-               | TNode _, Some parent ->
+               | (LNode ([] | [ _ ]) | TNode _), Some parent ->
                    clean_parent parent i hash (lvl - 5) startgen
                (* 'parent = None' means i is the root, and the root can only have a cnode child. *)
                | _ -> ());
@@ -278,7 +310,7 @@ module Make (H : Hashtbl.HashedType) = struct
         | TNode _ ->
             clean parent (lvl - 5) startgen;
             loop ()
-        | LNode lst as ln -> (
+        | LNode lst as ln ->
             let rec update_list = function
               | [] -> (
                   match f None with
@@ -290,23 +322,23 @@ module Make (H : Hashtbl.HashedType) = struct
                     | Some v -> ({ key; value = v } :: xs, false)
                     | None -> (xs, true)
                   else
-                    let updated, changed = update_list xs in
-                    (x :: updated, changed)
+                    let updated, removed = update_list xs in
+                    (x :: updated, removed)
             in
             let new_list, changed = update_list lst in
-            match new_list with
-            | [] ->
-                failwith "Empty list after deletion, this should never happen."
-            | [ l ] ->
-                if gen_dcss i ln (TNode l) startgen then (
-                  (match parent with
-                  | Some parent -> clean_parent parent i hash (lvl - 5) startgen
-                  | None -> ());
-                  changed)
-                else loop ()
-            | _ :: _ ->
-                if gen_dcss i ln (LNode new_list) startgen then changed
-                else loop ())
+            let mainnode, needs_cleaning =
+              match new_list with
+              | [] -> (TNode None, true)
+              | [ l ] -> (TNode (Some l), true)
+              | _ -> (LNode new_list, false)
+            in
+            if gen_dcss i ln mainnode startgen then (
+              (if needs_cleaning then
+               match parent with
+               | Some parent -> clean_parent parent i hash (lvl - 5) startgen
+               | None -> failwith "Cannot happen, solve with GADT (2)");
+              changed)
+            else loop ()
       in
       try aux t.root 0 None with Exit -> loop ()
     in
@@ -351,24 +383,29 @@ module Make (H : Hashtbl.HashedType) = struct
     in
     aux t.root 0 None
 
-  (* This function assumes l_filtered is sorted and it only contains valid indexes *)
-  let remove_from_bitmap bmp l_filtered =
-    let rec aux cursor bmp l_filtered seen =
-      if cursor >= 32 then bmp
+  let fmi_cnode cnode f lvl recur =
+    let rec aux l_mapped l_filtered pos =
+      if pos < 0 then
+        match l_mapped with
+        | [] when lvl > 0 -> None
+        | [ Leaf l ] when lvl > 0 -> Some (TNode (Some l))
+        | _ ->
+            let array = Array.of_list l_mapped in
+            let bmp = remove_from_bitmap cnode.bmp l_filtered in
+            Some (CNode { bmp; array })
       else
-        let bit = Int32.shift_left 1l cursor in
-        let flag = Int32.logand bit bmp in
-        if flag <> 0l then
-          match l_filtered with
-          | x :: xs when x = seen ->
-              aux (cursor + 1)
-                (Int32.logand bmp (Int32.lognot flag))
-                xs (seen + 1)
-          | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
-        else aux (cursor + 1) bmp l_filtered seen
+        match cnode.array.(pos) with
+        | INode inner -> (
+            match recur inner (lvl + 5) with
+            | Some branch -> aux (branch :: l_mapped) l_filtered (pos - 1)
+            | None -> aux l_mapped (pos :: l_filtered) (pos - 1))
+        | Leaf { key; value } -> (
+            match f key value with
+            | Some value ->
+                aux (Leaf { key; value } :: l_mapped) l_filtered (pos - 1)
+            | None -> aux l_mapped (pos :: l_filtered) (pos - 1))
     in
-    let res = aux 0 bmp l_filtered 0 in
-    res
+    aux [] [] (Array.length cnode.array - 1)
 
   let filter_map_inplace f t =
     let rec loop () =
@@ -376,47 +413,19 @@ module Make (H : Hashtbl.HashedType) = struct
       let rec aux i lvl parent =
         match Kcas.get i.main with
         | CNode cnode as cn -> (
-            let rec filter_cnode l_mapped l_filtered pos =
-              if pos < 0 then
-                match l_mapped with
-                | [] ->
-                    (* The entirety of the cnode contents was filtered *)
-                    None
-                | [ Leaf l ] when lvl > 0 -> Some (TNode l)
-                | _ ->
-                    let array = Array.of_list l_mapped in
-                    let bmp = remove_from_bitmap cnode.bmp l_filtered in
-                    Some (CNode { bmp; array })
-              else
-                match cnode.array.(pos) with
-                | Leaf { key; value } -> (
-                    match f key value with
-                    | Some value ->
-                        filter_cnode
-                          (Leaf { key; value } :: l_mapped)
-                          l_filtered (pos - 1)
-                    | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1)
-                    )
-                | INode inner -> (
-                    match aux inner (lvl + 5) (Some i) with
-                    | Some branch ->
-                        filter_cnode (branch :: l_mapped) l_filtered (pos - 1)
-                    | None -> filter_cnode l_mapped (pos :: l_filtered) (pos - 1)
-                    )
-            in
             let new_main_node =
-              filter_cnode [] [] (Array.length cnode.array - 1)
+              fmi_cnode cnode f lvl (fun inner lvl -> aux inner lvl (Some i))
             in
             match new_main_node with
-            | Some (TNode l) -> Some (Leaf l)
+            | None ->
+                if gen_dcss i cn (TNode None) startgen then None else loop ()
             | Some mainnode ->
                 if gen_dcss i cn mainnode startgen then Some (INode i)
-                else loop ()
-            | None -> None)
+                else loop ())
         | TNode _ ->
             clean parent (lvl - 5) startgen;
             loop ()
-        | LNode list as ln ->
+        | LNode list as ln -> (
             let new_list =
               List.filter_map
                 (fun { key; value } ->
@@ -425,8 +434,12 @@ module Make (H : Hashtbl.HashedType) = struct
                   | None -> None)
                 list
             in
-            if gen_dcss i ln (LNode new_list) startgen then Some (INode i)
-            else loop ()
+            match new_list with
+            | [] -> None
+            | [ l ] -> Some (Leaf l)
+            | _ ->
+                if gen_dcss i ln (LNode new_list) startgen then Some (INode i)
+                else loop ())
       in
       aux t.root 0 None
     in
@@ -554,11 +567,14 @@ module Make (H : Hashtbl.HashedType) = struct
               iv := !iv + 1)
         cnode.array
     and pr_tnode leaf =
-      pr_leaf_info leaf;
       Printf.fprintf oc
         "\tT%d [style=filled shape=box fontcolor=white color=black];\n" !it;
-      Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
-      iv := !iv + 1;
+      (match leaf with
+      | Some leaf ->
+          pr_leaf_info leaf;
+          Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
+          iv := !iv + 1
+      | None -> ());
       it := !it + 1
     and pr_list list =
       Printf.fprintf oc "\tL%d [style=filled fontcolor=white color=red];\n" !il;

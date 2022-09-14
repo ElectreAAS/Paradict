@@ -7,7 +7,6 @@ module Array = struct
   let insert a index elem =
     if index < 0 || index > length a then
       raise @@ Invalid_argument "Array.insert";
-
     init
       (length a + 1)
       (fun i ->
@@ -20,6 +19,17 @@ module Array = struct
     if index < 0 || index >= length a || length a = 0 then
       raise @@ Invalid_argument "Array.remove";
     init (length a - 1) (fun i -> if i < index then a.(i) else a.(i + 1))
+
+  (** [filter_map f a] applies [f] to all elements in [a], filtering [None] results, and returning the array of [Some] results. *)
+  let filter_map f a =
+    let rec aux i l =
+      if i >= length a then of_list @@ List.rev l
+      else
+        match f a.(i) with
+        | Some x -> aux (i + 1) (x :: l)
+        | None -> aux (i + 1) l
+    in
+    aux 0 []
 end
 
 module List = struct
