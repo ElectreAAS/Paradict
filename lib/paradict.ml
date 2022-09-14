@@ -40,7 +40,7 @@ module Make (H : Hashtbl.HashedType) = struct
     {
       root =
         {
-          main = Kcas.ref @@ CNode { bmp = 0l; array = [||] };
+          main = Kcas.ref (CNode { bmp = 0l; array = [||] });
           gen = Kcas.ref (object end);
         };
     }
@@ -68,7 +68,7 @@ module Make (H : Hashtbl.HashedType) = struct
     match hash_to_flag lvl hash with
     | Some flag ->
         let open Int32 in
-        let pos = popcount @@ logand bitmap (pred flag) in
+        let pos = pred flag |> logand bitmap |> popcount in
         (flag, pos)
     | None -> failwith "Maximum depth reached but flagpos was still used???"
 
@@ -102,15 +102,20 @@ module Make (H : Hashtbl.HashedType) = struct
             ()
         | _ -> ())
 
-  let cnode_with_insert cnode flag pos leaf =
+  let cnode_with_insert cnode leaf flag pos =
     let new_bitmap = Int32.logor cnode.bmp flag in
     let new_array = Array.insert cnode.array pos (Leaf leaf) in
     { bmp = new_bitmap; array = new_array }
 
-  let cnode_with_update cnode pos branch =
+  let cnode_with_update cnode branch pos =
     let array = Array.copy cnode.array in
     array.(pos) <- branch;
     { cnode with array }
+
+  let cnode_with_delete cnode flag pos =
+    let bmp = Int32.logxor cnode.bmp flag in
+    let array = Array.remove cnode.array pos in
+    { bmp; array }
 
   (** Update the generation of the immediate child [cn.array.(pos)] of [parent] to [new_gen].
       We volontarily do not update the generations of deeper INodes, as this is a lazy algorithm.
@@ -119,11 +124,12 @@ module Make (H : Hashtbl.HashedType) = struct
     match cn with
     | CNode cnode ->
         let new_cnode =
-          cnode_with_update cnode pos
+          cnode_with_update cnode
             (INode { main = Kcas.ref child_main; gen = Kcas.ref new_gen })
+            pos
         in
         gen_dcss parent cn (CNode new_cnode) new_gen
-    | _ -> true
+    | _ -> failwith "Cannot happen, solve with GADT (1)"
 
   let find key t =
     let hash = H.hash key in
@@ -178,7 +184,7 @@ module Make (H : Hashtbl.HashedType) = struct
           (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
           LNode [ l1; l2 ]
     in
-    INode { main = Kcas.ref @@ new_main_node; gen = Kcas.ref gen }
+    INode { main = Kcas.ref new_main_node; gen = Kcas.ref gen }
 
   let rec clean_parent parent i hash lvl startgen =
     if Kcas.get i.gen <> startgen then ()
@@ -200,11 +206,6 @@ module Make (H : Hashtbl.HashedType) = struct
             | _ -> ())
       | _ -> ()
 
-  let cnode_with_delete cnode pos flag =
-    let bmp = Int32.logxor cnode.bmp flag in
-    let array = Array.remove cnode.array pos in
-    { bmp; array }
-
   let update key f t =
     let hash = H.hash key in
     let rec loop () =
@@ -220,7 +221,7 @@ module Make (H : Hashtbl.HashedType) = struct
               | Some value ->
                   (* We need to insert it. *)
                   let new_cnode =
-                    cnode_with_insert cnode flag pos { key; value }
+                    cnode_with_insert cnode { key; value } flag pos
                   in
                   if gen_dcss i cn (CNode new_cnode) startgen then false
                   else loop ()
@@ -240,13 +241,13 @@ module Make (H : Hashtbl.HashedType) = struct
                       | Some value ->
                           (* We found a value to be updated. *)
                           let new_cnode =
-                            cnode_with_update cnode pos (Leaf { key; value })
+                            cnode_with_update cnode (Leaf { key; value }) pos
                           in
                           if gen_dcss i cn (CNode new_cnode) startgen then false
                           else raise Exit
                       | None ->
                           (* We need to remove this value *)
-                          let new_cnode = cnode_with_delete cnode pos flag in
+                          let new_cnode = cnode_with_delete cnode flag pos in
                           let contracted = contract new_cnode lvl in
                           gen_dcss i cn contracted startgen || raise Exit
                     else
@@ -260,7 +261,7 @@ module Make (H : Hashtbl.HashedType) = struct
                               (lvl + 5) startgen
                           in
                           let new_cnode =
-                            cnode_with_update cnode pos new_pair
+                            cnode_with_update cnode new_pair pos
                           in
                           if gen_dcss i cn (CNode new_cnode) startgen then false
                           else raise Exit
@@ -271,7 +272,7 @@ module Make (H : Hashtbl.HashedType) = struct
                match (Kcas.get i.main, parent) with
                | TNode _, Some parent ->
                    clean_parent parent i hash (lvl - 5) startgen
-               (* 'parent = None' means i is the root, and the root cannot have a TNode child. *)
+               (* 'parent = None' means i is the root, and the root can only have a cnode child. *)
                | _ -> ());
               leaf_removed
         | TNode _ ->
@@ -330,7 +331,7 @@ module Make (H : Hashtbl.HashedType) = struct
   let is_empty t =
     match Kcas.get t.root.main with
     | CNode cnode -> cnode.bmp = 0l
-    | _ -> failwith "non cnode at root"
+    | _ -> failwith "Cannot happen, solve with GADT (3)"
 
   let rec size t =
     let startgen = Kcas.get t.root.gen in
@@ -445,7 +446,7 @@ module Make (H : Hashtbl.HashedType) = struct
                 cnode.array
             in
             {
-              main = Kcas.ref @@ CNode { cnode with array };
+              main = Kcas.ref (CNode { cnode with array });
               gen = Kcas.ref startgen;
             }
         | TNode _ ->
@@ -457,7 +458,7 @@ module Make (H : Hashtbl.HashedType) = struct
                 (function { key; value } -> { key; value = f key value })
                 list
             in
-            { main = Kcas.ref @@ LNode new_list; gen = Kcas.ref startgen }
+            { main = Kcas.ref (LNode new_list); gen = Kcas.ref startgen }
       in
       aux t.root 0 None
     in
@@ -505,11 +506,11 @@ module Make (H : Hashtbl.HashedType) = struct
 
   let save_as_dot (string_of_key, string_of_val) t filename =
     let oc = open_out filename in
-    let ic = ref 0 in
-    let il = ref 0 in
-    let ii = ref 0 in
-    let it = ref 0 in
-    let iv = ref 0 in
+    let ic (* cnode *) = ref 0 in
+    let il (* lnode *) = ref 0 in
+    let ii (* inode *) = ref 0 in
+    let it (* tnode *) = ref 0 in
+    let iv (* leaf (value) *) = ref 0 in
     Printf.fprintf oc
       "digraph {\n\troot [shape=plaintext];\n\troot -> I0 [style=dotted];\n";
     let pr_cnode_info cnode =
