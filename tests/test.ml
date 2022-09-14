@@ -77,6 +77,21 @@ let fmi =
       "FMI should perform in-place modifs & removals" expected found
   done
 
+let fmi_with_bad_h =
+  Alcotest.test_case "fmi with bad hash function" `Quick @@ fun () ->
+  let open Paradict.Make (struct
+    type t = string
+
+    let equal = ( = )
+    let hash _ = 42
+  end) in
+  let numbers = create () in
+  add "one" 1 numbers;
+  add "two" 2 numbers;
+  filter_map_inplace (fun _ _ -> None) numbers;
+  Alcotest.(check bool) "FMI should properly empty trie" true (is_empty numbers);
+  ()
+
 let fold_test =
   Alcotest.test_case "fold" `Quick @@ fun () ->
   let numbers = create () in
@@ -125,7 +140,8 @@ let for_all_test =
   Alcotest.(check bool) "For all should invalidate false claim" false result;
   ()
 
-let iterations = [ iter_test; mi; fmi; fold_test; exists_test; for_all_test ]
+let iterations =
+  [ iter_test; mi; fmi; fmi_with_bad_h; fold_test; exists_test; for_all_test ]
 
 let collision_mem =
   Alcotest.test_case "collision & mem" `Quick @@ fun () ->
