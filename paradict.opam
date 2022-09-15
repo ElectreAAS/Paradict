@@ -11,7 +11,7 @@ bug-reports: "https://github.com/ElectreAAS/paradict/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.3"}
-  "kcas" {= "dev"}
+  "kcas" {>= "0.14"}
   "domainslib" {with-test}
   "mtime" {with-test}
   "alcotest" {with-test}
@@ -34,5 +34,5 @@ build: [
 ]
 dev-repo: "git+https://github.com/ElectreAAS/paradict.git"
 pin-depends: [
-  [ "kcas.dev" "git+https://github.com/ocaml-multicore/kcas#28841a38c1e95edca545256aaa7a69ea464c56df" ]
+  ["kcas.0.14" "git+https://github.com/ocaml-multicore/kcas#master"]
 ]

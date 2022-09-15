@@ -21,7 +21,7 @@
   ocaml
   dune
   (kcas
-   (= dev))
+   (>= "0.14"))
   (domainslib :with-test)
   (mtime :with-test)
   (alcotest :with-test)
