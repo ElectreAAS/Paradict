@@ -498,14 +498,14 @@ module Make (H : Hashtbl.HashedType) = struct
   let for_all pred = reduce (Array.for_all, List.for_all) pred
   let iter f = reduce (Array.iter, List.iter) f
 
-  let rec fold (f : key -> 'a -> 'b -> 'b) (t : 'a t) (init : 'b) : 'b =
+  let rec fold f t init =
     let startgen = Kcas.get t.root.gen in
     let rec aux acc i lvl parent =
       match Kcas.get i.main with
       | CNode cnode ->
           Array.fold_left
-            (fun inner_acc brnch ->
-              match brnch with
+            (fun inner_acc branch ->
+              match branch with
               | Leaf { key; value } -> f key value inner_acc
               | INode inner -> aux inner_acc inner (lvl + 5) (Some i))
             acc cnode.array
@@ -513,7 +513,9 @@ module Make (H : Hashtbl.HashedType) = struct
           clean parent (lvl - 5) startgen;
           fold f t init
       | LNode list ->
-          List.fold_left (fun acc { key; value } -> f key value acc) init list
+          List.fold_left
+            (fun inner_acc { key; value } -> f key value inner_acc)
+            acc list
     in
     aux init t.root 0 None
 
