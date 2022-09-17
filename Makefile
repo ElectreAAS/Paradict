@@ -1,7 +1,7 @@
 .PHONY: test
 test:
-	dune runtest --force
+	@ dune runtest --force
 
 .PHONY: bench
 bench:
-	dune exec bench/bench.exe
+	@ dune exec bench/bench.exe
