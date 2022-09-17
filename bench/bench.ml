@@ -31,28 +31,31 @@ struct
     bench "add" @@ fun () ->
     let t = P.create () in
     iter 1 nb (fun i -> P.add i i t);
-    assert (P.size t = nb);
     t
-
-  let () = bench "mem" @@ fun () -> iter 1 nb (fun i -> assert (P.mem i t))
 
   let () =
     bench "find_opt: Some" @@ fun () ->
-    iter 1 nb (fun i ->
-        match P.find_opt i t with
-        | Some j -> assert (i = j)
-        | None -> assert false)
+    iter 1 nb (fun i -> ignore @@ P.find_opt i t)
 
   let () =
     bench "find_opt: None" @@ fun () ->
-    iter (nb + 1) (2 * nb) (fun i ->
-        match P.find_opt i t with Some _ -> assert false | None -> ())
+    iter (nb + 1) (2 * nb) (fun i -> ignore @@ P.find_opt i t)
 
   let () =
-    bench "remove: all" @@ fun () ->
-    iter 1 nb (fun i -> P.remove i t);
-    assert (P.size t = 0);
-    assert (P.is_empty t)
+    bench "update" @@ fun () ->
+    iter 1 (2 * nb) (fun i ->
+        P.update i (fun _ -> if i mod 2 = 0 then Some i else None) t)
+
+  let () =
+    bench "iter" @@ fun () ->
+    let sum = ref 0 in
+    P.iter (fun k _ -> sum := !sum + k) t
+
+  let () =
+    bench "fold" @@ fun () -> ignore @@ P.fold (fun k _ acc -> acc + k) t 0
+
+  let () =
+    bench "remove: all" @@ fun () -> iter 1 nb (fun i -> P.remove (2 * i) t)
 end
 
 let run domains =

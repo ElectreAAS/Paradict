@@ -5,6 +5,9 @@ open Paradict.Make (struct
   let hash s = Hashtbl.hash s
 end)
 
+let nb = 10_000
+let nb_domains = 8
+
 let mem_empty =
   Alcotest.test_case "mem on empty map" `Quick @@ fun () ->
   let scores = create () in
@@ -34,7 +37,7 @@ let basics = [ mem_empty; add_mem; add_find ]
 let iter_test =
   Alcotest.test_case "iter" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 64 do
+  for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
   let module EntrySet = Set.Make (struct
@@ -44,7 +47,7 @@ let iter_test =
   end) in
   let set = ref EntrySet.empty in
   iter (fun k v -> set := EntrySet.add (k, v) !set) numbers;
-  for i = 0 to 64 do
+  for i = 1 to nb do
     let found = EntrySet.mem (string_of_int i, i) !set in
     Alcotest.(check bool) "Iter should have performed an insert" true found
   done
@@ -52,13 +55,15 @@ let iter_test =
 let mi =
   Alcotest.test_case "map inplace" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 64 do
+  for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
-  filter_map_inplace (fun _ i -> if i <= 32 then Some i else Some (-i)) numbers;
-  for i = 0 to 64 do
+  filter_map_inplace
+    (fun _ i -> if i <= nb / 2 then Some i else Some (-i))
+    numbers;
+  for i = 1 to nb do
     let found = find_opt (string_of_int i) numbers in
-    let expected = if i <= 32 then i else -i in
+    let expected = if i <= nb / 2 then i else -i in
     Alcotest.(check (option int))
       "FMI should perform in-place modifications" (Some expected) found
   done
@@ -66,13 +71,15 @@ let mi =
 let fmi =
   Alcotest.test_case "filter map inplace" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 64 do
+  for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
-  filter_map_inplace (fun _ i -> if i <= 32 then Some (2 * i) else None) numbers;
-  for i = 0 to 64 do
+  filter_map_inplace
+    (fun _ i -> if i <= nb / 2 then Some (2 * i) else None)
+    numbers;
+  for i = 1 to nb do
     let found = find_opt (string_of_int i) numbers in
-    let expected = if i <= 32 then Some (2 * i) else None in
+    let expected = if i <= nb / 2 then Some (2 * i) else None in
     Alcotest.(check (option int))
       "FMI should perform in-place modifs & removals" expected found
   done
@@ -89,39 +96,40 @@ let fmi_with_bad_h =
   add "one" 1 numbers;
   add "two" 2 numbers;
   filter_map_inplace (fun _ _ -> None) numbers;
+  Alcotest.(check int) "FMI should properly set size to 0" 0 (size numbers);
   Alcotest.(check bool) "FMI should properly empty trie" true (is_empty numbers);
   ()
 
 let fold_test =
   Alcotest.test_case "fold" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 64 do
-    add (string_of_int i) i numbers
+  for i = 1 to 2 * nb do
+    if i mod 2 = 0 then add (string_of_int i) i numbers
   done;
   let called = ref 0 in
   let result =
     fold
-      (fun k v acc ->
+      (fun _ v acc ->
         called := !called + 1;
-        if k <> "10" then acc + v else acc)
+        acc + v)
       numbers 0
   in
   Alcotest.(check int)
-    "Fold should call the function the correct amount of times" 65 !called;
-  let expected = 2070 in
+    "Fold should call the function the correct amount of times" nb !called;
+  let expected = nb * (nb + 1) in
   Alcotest.(check int) "Fold should compute the correct value" expected result;
   ()
 
 let exists_test =
   Alcotest.test_case "exists" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 64 do
+  for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
   let is_prime _ n = n = 42 (* I swear it's prime *) in
   let result = exists is_prime numbers in
   Alcotest.(check bool) "Exists should find a prime number" true result;
-  let is_big _ n = n = 1000 in
+  let is_big _ n = n = nb * 4 in
   let result = exists is_big numbers in
   Alcotest.(check bool) "Exists should not find absent number" false result;
   ()
@@ -129,7 +137,7 @@ let exists_test =
 let for_all_test =
   Alcotest.test_case "for all" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 64 do
+  for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
   let is_stringed str n = int_of_string str = n in
@@ -146,10 +154,10 @@ let iterations =
 let collision_mem =
   Alcotest.test_case "collision & mem" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 32 do
+  for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
-  for i = 0 to 32 do
+  for i = 1 to nb do
     let found = find_opt (string_of_int i) numbers in
     Alcotest.(check (option int))
       (string_of_int i ^ " should be found even in case of collision")
@@ -160,10 +168,10 @@ let collision_mem =
 let size_empty =
   Alcotest.test_case "size after full remove" `Quick @@ fun () ->
   let numbers = create () in
-  for i = 0 to 32 do
+  for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
-  for i = 0 to 32 do
+  for i = 1 to nb do
     remove (string_of_int i) numbers
   done;
   Alcotest.(check bool)
@@ -173,13 +181,12 @@ let size_empty =
 let collisions = [ collision_mem; size_empty ]
 
 let para_add_mem =
-  let nb = 64 in
   let add_bunch map i =
-    for j = 0 to nb do
+    for j = 1 to nb do
       add (Format.sprintf "(%d, %d)" i j) (j, i) map
     done;
     let all = ref true in
-    for j = 0 to nb do
+    for j = 1 to nb do
       all := !all && mem (Format.sprintf "(%d, %d)" i j) map
     done;
     !all
@@ -187,7 +194,7 @@ let para_add_mem =
   Alcotest.test_case "adds & mems" `Quick @@ fun () ->
   let scores = create () in
   let domains =
-    Array.init 8 (fun i -> Domain.spawn (fun () -> add_bunch scores i))
+    Array.init nb_domains (fun i -> Domain.spawn (fun () -> add_bunch scores i))
   in
   let all_doms = Array.for_all Domain.join domains in
   Alcotest.(check bool)
@@ -197,19 +204,19 @@ let para_add_mem =
 
 let para_add_then_mem =
   let add_bunch map i =
-    for j = 0 to 64 do
+    for j = 1 to nb do
       add (Format.sprintf "(%d, %d)" i j) (i, j) map
     done
   in
   Alcotest.test_case "adds then mem" `Quick @@ fun () ->
   let scores = create () in
   let domains =
-    Array.init 8 (fun i -> Domain.spawn (fun () -> add_bunch scores i))
+    Array.init nb_domains (fun i -> Domain.spawn (fun () -> add_bunch scores i))
   in
   Array.iteri
     (fun i d ->
       Domain.join d;
-      for j = 0 to 64 do
+      for j = 1 to nb do
         let res = mem (Format.sprintf "(%d, %d)" i j) scores in
         Alcotest.(check bool)
           "Parallel adds should all be found afterward" true res
@@ -221,17 +228,15 @@ let para_add_contention =
   Alcotest.test_case "adds with contention" `Quick @@ fun () ->
   let scores = create () in
   let domains =
-    Array.init 8 (fun i ->
-        Domain.spawn (fun () -> add "Celeste" (13 + i) scores))
+    Array.init nb_domains (fun _ ->
+        Domain.spawn (fun () -> add "Celeste" 19 scores))
   in
   Array.iter Domain.join domains;
   let found = find_opt "Celeste" scores in
   match found with
   | None -> Alcotest.fail "Added value should be found even with contention"
   | Some k ->
-      Alcotest.(check bool)
-        "Added value should be a really possible value" true
-        (k >= 13 && k <= 20);
+      Alcotest.(check int) "Added value should be a really possible value" 19 k;
       ()
 
 let parallel = [ para_add_mem; para_add_then_mem; para_add_contention ]
@@ -251,11 +256,11 @@ let basic_snap =
 let snap_then_ops =
   Alcotest.test_case "snapshot then operations" `Quick @@ fun () ->
   let dict = create () in
-  for i = 0 to 32 do
+  for i = 1 to nb do
     add (string_of_int i) i dict
   done;
   let dict' = copy dict in
-  for i = 0 to 32 do
+  for i = 1 to nb do
     let stri = string_of_int i in
     remove stri dict;
     let found = find_opt stri dict' in
