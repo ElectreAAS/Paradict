@@ -2,20 +2,19 @@ open Extensions
 include Paradict_intf
 
 module Make (H : Hashtbl.HashedType) = struct
-  module Types = struct
-    type key = H.t
-    type at_root
-    type not_root
-    type _ kind = At_root : at_root kind | Not_root : not_root kind
+  type key = H.t
+  type at_root
+  type not_root
+  type _ kind = At_root : at_root kind | Not_root : not_root kind
 
-    type (_, _) koption =
-      | KSome : 'a -> ('a, not_root) koption
-      | KNone : ('a, at_root) koption
+  type (_, _) koption =
+    | KSome : 'a -> ('a, not_root) koption
+    | KNone : ('a, at_root) koption
 
-    type 'a t = { root : ('a, at_root) iNode }
+  type 'a t = { root : ('a, at_root) iNode }
 
-    and gen = < >
-    (** The type of generations is an empty object.
+  and gen = < >
+  (** The type of generations is an empty object.
 
         This is a classic OCaml trick to ensure safe (in)equality:
         With this setup
@@ -23,22 +22,16 @@ module Make (H : Hashtbl.HashedType) = struct
         [x = y] is false but [x = z] is true.
         This avoids integer overflow and discarded gen objects will be garbage collected. *)
 
-    and ('a, 'r) iNode = {
-      main : ('a, 'r) mainNode Kcas.ref;
-      gen : gen Kcas.ref;
-    }
+  and ('a, 'r) iNode = { main : ('a, 'r) mainNode Kcas.ref; gen : gen Kcas.ref }
 
-    and (_, _) mainNode =
-      | CNode : 'a cNode -> ('a, 'r) mainNode
-      | TNode : 'a leaf option -> ('a, not_root) mainNode
-      | LNode : 'a leaf list -> ('a, not_root) mainNode
+  and (_, _) mainNode =
+    | CNode : 'a cNode -> ('a, 'r) mainNode
+    | TNode : 'a leaf option -> ('a, not_root) mainNode
+    | LNode : 'a leaf list -> ('a, not_root) mainNode
 
-    and 'a cNode = { bmp : Int32.t; array : 'a branch array }
-    and 'a branch = INode of ('a, not_root) iNode | Leaf of 'a leaf
-    and 'a leaf = { key : key; value : 'a }
-  end
-
-  include Types
+  and 'a cNode = { bmp : Int32.t; array : 'a branch array }
+  and 'a branch = INode of ('a, not_root) iNode | Leaf of 'a leaf
+  and 'a leaf = { key : key; value : 'a }
 
   (** Generational Double Compare Single Swap *)
   let gen_dcss :
@@ -162,8 +155,11 @@ module Make (H : Hashtbl.HashedType) = struct
       let startgen = Kcas.get t.root.gen in
       let rec aux :
           type r1 r2.
-          ('a, r1) iNode -> int -> (('a, r2) iNode, r1) koption -> 'a =
-       fun i lvl parent ->
+          r1 kind * ('a, r1) iNode ->
+          int ->
+          (r2 kind * ('a, r2) iNode, r1) koption ->
+          'a =
+       fun (k, i) lvl parent ->
         match Kcas.get i.main with
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
@@ -172,9 +168,9 @@ module Make (H : Hashtbl.HashedType) = struct
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux inner (lvl + 5) (KSome i)
+                    aux (Not_root, inner) (lvl + 5) (KSome (k, i))
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
-                  then aux i lvl parent
+                  then aux (k, i) lvl parent
                   else loop ()
               | Leaf leaf ->
                   if H.equal leaf.key key then leaf.value else raise Not_found)
@@ -183,12 +179,11 @@ module Make (H : Hashtbl.HashedType) = struct
             leaf.value
         | TNode _ -> (
             match parent with
-            | KNone -> . (* FIXME: this is where the GADT magic happens *)
-            | KSome p ->
-                clean p (failwith "TODO") startgen;
+            | KSome (k, p) ->
+                clean p k startgen;
                 loop ())
       in
-      aux t.root 0 KNone
+      aux (At_root, t.root) 0 KNone
     in
     loop ()
 
@@ -234,10 +229,11 @@ module Make (H : Hashtbl.HashedType) = struct
                   | Some resurrected -> cnode_with_update cnode resurrected pos
                   | None -> cnode_with_delete cnode flag pos
                 in
-                if not @@ gen_dcss parent cn (contract new_cnode lvl) startgen
-                then clean_parent parent i hash lvl startgen
+                if
+                  not
+                  @@ gen_dcss parent cn (contract new_cnode At_root) startgen
+                then clean_parent parent i hashcode lvl startgen
             | _ -> ())
-      | _ -> ()
 
   let update key f t =
     let hash = H.hash key in
