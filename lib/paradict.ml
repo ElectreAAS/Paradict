@@ -2,19 +2,32 @@ open Extensions
 include Paradict_intf
 
 module Make (H : Hashtbl.HashedType) = struct
-  type key = H.t
-  type at_root
-  type not_root
-  type _ kind = At_root : at_root kind | Not_root : not_root kind
+  module Types = struct
+    type key = H.t
+    type z = Z [@@warning "-37"]
+    type _ s = S : 'n -> 'n s [@@warning "-37"]
+    type (_, _) eq = Eq : ('a, 'a) eq
+    type _ kind = SK : 'n kind -> 'n s kind | ZK : z kind
 
-  type (_, _) koption =
-    | KSome : 'a -> ('a, not_root) koption
-    | KNone : ('a, at_root) koption
+    (** Parent option.
 
-  type 'a t = { root : ('a, at_root) iNode }
+        None means we're at the root. *)
+    type (_, _) koption =
+      | KSome : 'a -> ('a, 'n s) koption
+      | KNone : ('a, z) koption
 
-  and gen = < >
-  (** The type of generations is an empty object.
+    (** Reverse from above.
+        Internal return type from operations that might delete nodes.
+
+        None can't be returned for the root iNode. *)
+    type (_, _) rkoption =
+      | RKSome : 'a -> ('a, 'n) rkoption
+      | RKNone : ('a, 'n s) rkoption
+
+    type 'a t = { root : ('a, z) iNode }
+
+    and gen = < >
+    (** The type of generations is an empty object.
 
         This is a classic OCaml trick to ensure safe (in)equality:
         With this setup
@@ -22,21 +35,31 @@ module Make (H : Hashtbl.HashedType) = struct
         [x = y] is false but [x = z] is true.
         This avoids integer overflow and discarded gen objects will be garbage collected. *)
 
-  and ('a, 'r) iNode = { main : ('a, 'r) mainNode Kcas.ref; gen : gen Kcas.ref }
+    and ('a, 'n) iNode = {
+      main : ('a, 'n) mainNode Kcas.ref;
+      gen : gen Kcas.ref;
+    }
 
-  and (_, _) mainNode =
-    | CNode : 'a cNode -> ('a, 'r) mainNode
-    | TNode : 'a leaf option -> ('a, not_root) mainNode
-    | LNode : 'a leaf list -> ('a, not_root) mainNode
+    and (_, _) mainNode =
+      | CNode : ('a, 'n) cNode -> ('a, 'n) mainNode
+      | TNode : 'a leaf option -> ('a, 'n s) mainNode
+      | LNode : 'a leaf list -> ('a, 'n s) mainNode
 
-  and 'a cNode = { bmp : Int32.t; array : 'a branch array }
-  and 'a branch = INode of ('a, not_root) iNode | Leaf of 'a leaf
-  and 'a leaf = { key : key; value : 'a }
+    and ('a, 'n) cNode = { bmp : Int32.t; array : ('a, 'n) branch array }
+
+    and ('a, 'n) branch =
+      | INode : ('a, 'n s) iNode -> ('a, 'n) branch
+      | Leaf : 'a leaf -> ('a, 'n) branch
+
+    and 'a leaf = { key : key; value : 'a }
+  end
+
+  include Types
 
   (** Generational Double Compare Single Swap *)
   let gen_dcss :
-      type r.
-      ('a, r) iNode -> ('a, r) mainNode -> ('a, r) mainNode -> gen -> bool =
+      type n.
+      ('a, n) iNode -> ('a, n) mainNode -> ('a, n) mainNode -> gen -> bool =
    fun inode old_m new_m gen ->
     let cas = Kcas.mk_cas inode.main old_m new_m in
     let atomic_read = Kcas.mk_cas inode.gen gen gen in
@@ -51,28 +74,20 @@ module Make (H : Hashtbl.HashedType) = struct
         };
     }
 
-  let create_complex k1 k2 =
-    let gen = Kcas.ref (object end) in
-    let t : (int, not_root) mainNode = TNode { key = k1; value = 0 } in
-    let i1 : int branch = INode { main = Kcas.ref t; gen } in
-    let c : (int, not_root) mainNode =
-      CNode { bmp = 1l; array = [| Leaf { key = k2; value = 8 } |] }
-    in
-    let i2 : int branch = INode { main = Kcas.ref c; gen } in
-    let master_c : (int, at_root) mainNode =
-      CNode { bmp = 3l; array = [| i1; i2 |] }
-    in
-    { root = { gen; main = Kcas.ref master_c } }
-
   let rec clear t =
     let startgen = Kcas.get t.root.gen in
     let empty_mnode = CNode { bmp = 0l; array = [||] } in
     if not @@ gen_dcss t.root (Kcas.get t.root.main) empty_mnode startgen then
       clear t
 
-  (* We only use 5 bits of the hash, depending on the level in the tree.
+  let rec lvl_of_kind : type n. int -> n kind -> int =
+   fun acc n -> match n with ZK -> acc | SK n -> lvl_of_kind (acc + 5) n
+
+  (* We only use 5 bits of the hashcode, depending on the level in the tree.
      Note that [lvl] is always a multiple of 5. (5 = log2 32) *)
-  let hash_to_flag lvl hash =
+  let hash_to_flag : type n. n kind -> int -> int32 option =
+   fun k hash ->
+    let lvl = lvl_of_kind 0 k in
     if lvl > Sys.int_size then None
     else
       let mask = 0x1F in
@@ -83,35 +98,61 @@ module Make (H : Hashtbl.HashedType) = struct
   (** [flag] is a single bit flag (never 0)
 
       [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
-  let flagpos lvl bitmap hash =
-    match hash_to_flag lvl hash with
+  let flagpos k bitmap hash =
+    match hash_to_flag k hash with
     | Some flag ->
         let open Int32 in
         let pos = pred flag |> logand bitmap |> popcount in
         (flag, pos)
     | None -> failwith "Maximum depth reached but flagpos was still used???"
 
-  let resurrect branch =
-    match branch with
-    | Leaf _ -> branch
-    | INode i -> (
-        match Kcas.get i.main with TNode leaf -> Leaf leaf | _ -> branch)
+  (* This function assumes l_filtered is sorted and it only contains valid indexes *)
+  let remove_from_bitmap bmp l_filtered =
+    let rec aux cursor bmp l_filtered seen =
+      if cursor >= 32 then bmp
+      else
+        let bit = Int32.shift_left 1l cursor in
+        let flag = Int32.logand bit bmp in
+        if flag <> 0l then
+          match l_filtered with
+          | x :: xs when x = seen ->
+              aux (cursor + 1)
+                (Int32.logand bmp (Int32.lognot flag))
+                xs (seen + 1)
+          | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
+        else aux (cursor + 1) bmp l_filtered seen
+    in
+    let res = aux 0 bmp l_filtered 0 in
+    res
 
-  let contract : type k. k kind -> 'a cNode -> ('a, k) mainNode =
-   fun k cnode ->
+  let resurrect i = function
+    | TNode None | LNode [] -> None
+    | TNode (Some l) | LNode [ l ] -> Some (Leaf l)
+    | _ -> Some i
+
+  let contract : type n. ('a, n) cNode -> n kind -> ('a, n) mainNode =
+   fun cnode k ->
     match k with
-    | Not_root when Array.length cnode.array = 1 -> (
-        match cnode.array.(0) with Leaf leaf -> TNode leaf | _ -> CNode cnode)
+    | SK _ -> (
+        match cnode.array.(0) with
+        | Leaf l when Array.length cnode.array = 1 -> TNode (Some l)
+        | _ -> CNode cnode)
     | _ -> CNode cnode
 
-  let compress k cnode =
-    let array = Array.map resurrect cnode.array in
-    contract k { cnode with array }
+  let compress : type n. ('a, n) cNode -> n kind -> ('a, n) mainNode =
+   fun cnode k ->
+    let array =
+      Array.filter_map
+        (function
+          | Leaf _ as l -> Some l
+          | INode inner as i -> resurrect i (Kcas.get inner.main))
+        cnode.array
+    in
+    contract { cnode with array } k
 
-  let clean
-      (* : type k. k kind -> ('a, k) iNode -> gen -> unit =
-         fun *) k parent startgen =
-    match Kcas.get parent.main with
+  let clean : type n. ('a, n) iNode -> n kind -> gen -> unit =
+   fun i k gen ->
+    match Kcas.get i.main with
     | CNode cnode as cn ->
         let _ignored =
           (* TODO: it is ignored in the paper, but investigate if that is really wise *)
@@ -125,7 +166,9 @@ module Make (H : Hashtbl.HashedType) = struct
     let new_array = Array.insert cnode.array pos (Leaf leaf) in
     { bmp = new_bitmap; array = new_array }
 
-  let cnode_with_update cnode branch pos =
+  let cnode_with_update :
+      type n. ('a, n) cNode -> ('a, n) branch -> int -> ('a, n) cNode =
+   fun cnode branch pos ->
     let array = Array.copy cnode.array in
     array.(pos) <- branch;
     { cnode with array }
@@ -154,23 +197,23 @@ module Make (H : Hashtbl.HashedType) = struct
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
       let rec aux :
-          type r1 r2.
-          r1 kind * ('a, r1) iNode ->
-          int ->
-          (r2 kind * ('a, r2) iNode, r1) koption ->
+          type n1 n2.
+          ('a, n1) iNode ->
+          n1 kind ->
+          (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
           'a =
-       fun (k, i) lvl parent ->
+       fun i k parent_opt ->
         match Kcas.get i.main with
         | CNode cnode as cn -> (
-            let flag, pos = flagpos lvl cnode.bmp hash in
+            let flag, pos = flagpos k cnode.bmp hash in
             if Int32.logand flag cnode.bmp = 0l then raise Not_found
             else
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux (Not_root, inner) (lvl + 5) (KSome (k, i))
+                    aux inner (SK k) (KSome (i, k, Eq))
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
-                  then aux (k, i) lvl parent
+                  then aux i k parent_opt
                   else loop ()
               | Leaf leaf ->
                   if H.equal leaf.key key then leaf.value else raise Not_found)
@@ -178,21 +221,24 @@ module Make (H : Hashtbl.HashedType) = struct
             let leaf = List.find (fun l -> H.equal l.key key) lst in
             leaf.value
         | TNode _ -> (
-            match parent with
-            | KSome (k, p) ->
-                clean p k startgen;
+            match parent_opt with
+            | KSome (parent, k', Eq) ->
+                clean parent k' startgen;
                 loop ())
       in
-      aux (At_root, t.root) 0 KNone
+      aux t.root ZK KNone
     in
     loop ()
 
   let find_opt key t = try Some (find key t) with Not_found -> None
   let mem key t = Option.is_some (find_opt key t)
 
-  let rec branch_of_pair (l1, h1) (l2, h2) lvl gen =
-    let flag1 = hash_to_flag lvl h1 in
-    let flag2 = hash_to_flag lvl h2 in
+  let rec branch_of_pair :
+      type n.
+      'a leaf * int -> 'a leaf * int -> n s kind -> gen -> ('a, n) branch =
+   fun (l1, h1) (l2, h2) k gen ->
+    let flag1 = hash_to_flag k h1 in
+    let flag2 = hash_to_flag k h2 in
     let new_main_node =
       match (flag1, flag2) with
       | Some flag1, Some flag2 ->
@@ -201,7 +247,7 @@ module Make (H : Hashtbl.HashedType) = struct
             match Int32.unsigned_compare flag1 flag2 with
             | 0 ->
                 (* Collision on this level, we need to go deeper *)
-                [| branch_of_pair (l1, h1) (l2, h2) (lvl + 5) gen |]
+                [| branch_of_pair (l1, h1) (l2, h2) (SK k) gen |]
             | 1 -> [| Leaf l2; Leaf l1 |]
             | _ -> [| Leaf l1; Leaf l2 |]
           in
@@ -212,14 +258,17 @@ module Make (H : Hashtbl.HashedType) = struct
     in
     INode { main = Kcas.ref new_main_node; gen = Kcas.ref gen }
 
-  let rec clean_parent parent i hash lvl startgen =
+  (** TODO: this might be cool to start asynchronously *)
+  let rec clean_parent :
+      type n. ('a, n) iNode -> n kind -> ('a, n s) iNode -> int -> gen -> unit =
+   fun parent k i hash startgen ->
     if Kcas.get i.gen <> startgen then ()
     else
       let main = Kcas.get i.main in
       let p_main = Kcas.get parent.main in
       match p_main with
       | CNode cnode as cn -> (
-          let flag, pos = flagpos lvl cnode.bmp hash in
+          let flag, pos = flagpos k cnode.bmp hash in
           if Int32.logand flag cnode.bmp <> 0l && cnode.array.(pos) = INode i
           then
             match main with
@@ -229,21 +278,26 @@ module Make (H : Hashtbl.HashedType) = struct
                   | Some resurrected -> cnode_with_update cnode resurrected pos
                   | None -> cnode_with_delete cnode flag pos
                 in
-                if
-                  not
-                  @@ gen_dcss parent cn (contract new_cnode At_root) startgen
-                then clean_parent parent i hashcode lvl startgen
+                if not @@ gen_dcss parent cn (contract new_cnode k) startgen
+                then clean_parent parent k i hash startgen
             | _ -> ())
+      | _ -> failwith "GADT FIX 1"
 
   let update key f t =
     let hash = H.hash key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
       (* Boolean return value to signal a mapping was deleted. *)
-      let rec aux i lvl parent : bool =
+      let rec aux :
+          type n1 n2.
+          ('a, n1) iNode ->
+          n1 kind ->
+          (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+          bool =
+       fun i k parent_opt ->
         match Kcas.get i.main with
         | CNode cnode as cn ->
-            let flag, pos = flagpos lvl cnode.bmp hash in
+            let flag, pos = flagpos k cnode.bmp hash in
             if Int32.logand flag cnode.bmp = 0l then
               (* No flag collision, the key isn't in the map. *)
               match f None with
@@ -260,9 +314,9 @@ module Make (H : Hashtbl.HashedType) = struct
                 match cnode.array.(pos) with
                 | INode inner ->
                     if Kcas.get inner.gen = startgen then
-                      aux inner (lvl + 5) (Some i)
+                      aux inner (SK k) (KSome (i, k, Eq))
                     else if regenerate i cn pos (Kcas.get inner.main) startgen
-                    then aux i lvl parent
+                    then aux i k parent_opt
                     else raise Exit
                 | Leaf l -> (
                     if H.equal l.key key then
@@ -277,7 +331,7 @@ module Make (H : Hashtbl.HashedType) = struct
                       | None ->
                           (* We need to remove this value *)
                           let new_cnode = cnode_with_delete cnode flag pos in
-                          let contracted = contract new_cnode lvl in
+                          let contracted = contract new_cnode k in
                           gen_dcss i cn contracted startgen || raise Exit
                     else
                       match f None with
@@ -287,7 +341,7 @@ module Make (H : Hashtbl.HashedType) = struct
                             branch_of_pair
                               (l, H.hash l.key)
                               ({ key; value }, hash)
-                              (lvl + 5) startgen
+                              (SK k) startgen
                           in
                           let new_cnode =
                             cnode_with_update cnode new_pair pos
@@ -298,15 +352,19 @@ module Make (H : Hashtbl.HashedType) = struct
                       | None -> false)
               in
               (if leaf_removed then
-               match (Kcas.get i.main, parent) with
-               | (LNode ([] | [ _ ]) | TNode _), Some parent ->
-                   clean_parent parent i hash (lvl - 5) startgen
-               (* 'parent = None' means i is the root, and the root can only have a cnode child. *)
+               match Kcas.get i.main with
+               | LNode ([] | [ _ ]) | TNode _ -> (
+                   match parent_opt with
+                   | KSome (parent, k', Eq) ->
+                       clean_parent parent k' i hash startgen
+                   | KNone -> failwith "GADT FIX 2")
                | _ -> ());
               leaf_removed
-        | TNode _ ->
-            clean parent (lvl - 5) startgen;
-            loop ()
+        | TNode _ -> (
+            match parent_opt with
+            | KSome (parent, k', Eq) ->
+                clean parent k' startgen;
+                loop ())
         | LNode lst as ln ->
             let rec update_list = function
               | [] -> (
@@ -331,13 +389,13 @@ module Make (H : Hashtbl.HashedType) = struct
             in
             if gen_dcss i ln mainnode startgen then (
               (if needs_cleaning then
-               match parent with
-               | Some parent -> clean_parent parent i hash (lvl - 5) startgen
-               | None -> failwith "Cannot happen, solve with GADT (2)");
+               match parent_opt with
+               | KSome (parent, k', Eq) ->
+                   clean_parent parent k' i hash startgen);
               changed)
             else loop ()
       in
-      try aux t.root 0 None with Exit -> loop ()
+      try aux t.root ZK KNone with Exit -> loop ()
     in
     ignore (loop ())
 
@@ -358,44 +416,63 @@ module Make (H : Hashtbl.HashedType) = struct
   let copy = snapshot
 
   let is_empty t =
-    match Kcas.get t.root.main with
-    | CNode cnode -> cnode.bmp = 0l
-    | _ -> failwith "Cannot happen, solve with GADT (3)"
+    match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l
 
   let rec size t =
     let startgen = Kcas.get t.root.gen in
-    let rec aux i lvl parent =
+    let rec aux :
+        type n1 n2.
+        ('a, n1) iNode ->
+        n1 kind ->
+        (('a, n2) iNode * n2 kind, n1) koption ->
+        int =
+     fun i k parent_opt ->
       match Kcas.get i.main with
       | CNode cnode ->
           Array.fold_left
             (fun acc b ->
               match b with
               | Leaf _ -> acc + 1
-              | INode inner -> acc + aux inner (lvl + 5) (Some i))
+              | INode inner -> acc + aux inner (SK k) (KSome (i, k)))
             0 cnode.array
-      | TNode _ ->
-          clean parent (lvl - 5) startgen;
-          size t
+      | TNode _ -> (
+          match parent_opt with
+          | KSome (parent, k') ->
+              clean parent k' startgen;
+              size t)
       | LNode lst -> List.length lst
     in
-    aux t.root 0 None
+    aux t.root ZK KNone
 
-  let fmi_cnode cnode f lvl recur =
-    let rec aux l_mapped l_filtered pos =
+  let fmi_cnode :
+      type n.
+      ('a, n) cNode ->
+      n kind ->
+      (key -> 'a -> 'a option) ->
+      (('a, n s) iNode ->
+      n s kind ->
+      ((('a, n) branch * _, n s) rkoption, n s) koption) ->
+      (('a, n) mainNode, n) rkoption =
+   fun cnode k f recur ->
+    let rec aux :
+        ('a, n) branch list -> int list -> int -> (('a, n) mainNode, n) rkoption
+        =
+     fun l_mapped l_filtered pos ->
       if pos < 0 then
-        match l_mapped with
-        | [] when lvl > 0 -> None
-        | [ Leaf l ] when lvl > 0 -> Some (TNode (Some l))
+        match (l_mapped, k) with
+        | [], SK _ -> RKNone
+        | [ Leaf l ], SK _ -> RKSome (TNode (Some l))
         | _ ->
             let array = Array.of_list l_mapped in
             let bmp = remove_from_bitmap cnode.bmp l_filtered in
-            Some (CNode { bmp; array })
+            RKSome (CNode { bmp; array })
       else
         match cnode.array.(pos) with
         | INode inner -> (
-            match recur inner (lvl + 5) with
-            | Some branch -> aux (branch :: l_mapped) l_filtered (pos - 1)
-            | None -> aux l_mapped (pos :: l_filtered) (pos - 1))
+            match recur inner (SK k) with
+            | KSome (RKSome (branch, _)) ->
+                aux (branch :: l_mapped) l_filtered (pos - 1)
+            | KSome RKNone -> aux l_mapped (pos :: l_filtered) (pos - 1))
         | Leaf { key; value } -> (
             match f key value with
             | Some value ->
@@ -407,21 +484,34 @@ module Make (H : Hashtbl.HashedType) = struct
   let filter_map_inplace f t =
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux i lvl parent =
+      let rec aux :
+          type n1 n2.
+          ('a, n1) iNode ->
+          n1 kind ->
+          (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+          ((('a, n2) branch * (n1, n2 s) eq, n1) rkoption, n1) koption =
+       fun i k parent_opt ->
         match Kcas.get i.main with
         | CNode cnode as cn -> (
             let new_main_node =
-              fmi_cnode cnode f lvl (fun inner lvl -> aux inner lvl (Some i))
+              fmi_cnode cnode k f (fun inner k' ->
+                  aux inner k' (KSome (i, k, Eq)))
             in
             match new_main_node with
-            | None ->
-                if gen_dcss i cn (TNode None) startgen then None else loop ()
-            | Some mainnode ->
-                if gen_dcss i cn mainnode startgen then Some (INode i)
-                else loop ())
-        | TNode _ ->
-            clean parent (lvl - 5) startgen;
-            loop ()
+            | RKNone ->
+                if gen_dcss i cn (TNode None) startgen then KSome RKNone
+                else raise Exit
+            | RKSome mainnode ->
+                if gen_dcss i cn mainnode startgen then
+                  match parent_opt with
+                  | KNone -> KNone
+                  | KSome (_, _, Eq) -> KSome (RKSome (INode i, Eq))
+                else raise Exit)
+        | TNode _ -> (
+            match parent_opt with
+            | KSome (p, k, Eq) ->
+                clean p k startgen;
+                raise Exit)
         | LNode list as ln -> (
             let new_list =
               List.filter_map
@@ -431,27 +521,34 @@ module Make (H : Hashtbl.HashedType) = struct
                   | None -> None)
                 list
             in
-            match new_list with
-            | [] -> None
-            | [ l ] -> Some (Leaf l)
-            | _ ->
-                if gen_dcss i ln (LNode new_list) startgen then Some (INode i)
-                else loop ())
+            match (new_list, parent_opt) with
+            | [], _ -> KSome RKNone
+            | [ l ], KSome (_, _, Eq) -> KSome (RKSome (Leaf l, Eq))
+            | _, KSome (_, _, Eq) ->
+                if gen_dcss i ln (LNode new_list) startgen then
+                  KSome (RKSome (INode i, Eq))
+                else raise Exit)
       in
-      aux t.root 0 None
+      try ignore @@ aux t.root ZK KNone with Exit -> loop ()
     in
-    ignore (loop ())
+    loop ()
 
   let map f t =
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux i lvl parent =
+      let rec aux :
+          type n1 n2.
+          ('a, n1) iNode ->
+          n1 kind ->
+          (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+          ('b, n1) iNode =
+       fun i k parent_opt ->
         match Kcas.get i.main with
         | CNode cnode ->
             let array =
               Array.map
                 (function
-                  | INode inner -> INode (aux inner (lvl + 5) (Some i))
+                  | INode inner -> INode (aux inner (SK k) (KSome (i, k, Eq)))
                   | Leaf { key; value } -> Leaf { key; value = f key value })
                 cnode.array
             in
@@ -459,9 +556,11 @@ module Make (H : Hashtbl.HashedType) = struct
               main = Kcas.ref (CNode { cnode with array });
               gen = Kcas.ref startgen;
             }
-        | TNode _ ->
-            clean parent (lvl - 5) startgen;
-            loop ()
+        | TNode _ -> (
+            match parent_opt with
+            | KSome (parent, k', Eq) ->
+                clean parent k' startgen;
+                raise Exit)
         | LNode list ->
             let new_list =
               List.map
@@ -470,51 +569,114 @@ module Make (H : Hashtbl.HashedType) = struct
             in
             { main = Kcas.ref (LNode new_list); gen = Kcas.ref startgen }
       in
-      aux t.root 0 None
+      try aux t.root ZK KNone with Exit -> loop ()
     in
     { root = loop () }
 
-  let rec reduce (array_fn, list_fn) f t =
+  let rec exists pred t =
     let startgen = Kcas.get t.root.gen in
-    let rec aux i lvl parent =
+    let rec aux :
+        type n1 n2.
+        ('a, n1) iNode ->
+        n1 kind ->
+        (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+        'b =
+     fun i k parent ->
       match Kcas.get i.main with
       | CNode cnode ->
-          array_fn
+          Array.exists
+            (function
+              | Leaf { key; value } -> pred key value
+              | INode inner -> aux inner (SK k) (KSome (i, k, Eq)))
+            cnode.array
+      | TNode _ -> (
+          match parent with
+          | KSome (parent, k', Eq) ->
+              clean parent k' startgen;
+              exists pred t)
+      | LNode list -> List.exists (fun { key; value } -> pred key value) list
+    in
+    aux t.root ZK KNone
+
+  let rec for_all pred t =
+    let startgen = Kcas.get t.root.gen in
+    let rec aux :
+        type n1 n2.
+        ('a, n1) iNode ->
+        n1 kind ->
+        (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+        'b =
+     fun i k parent ->
+      match Kcas.get i.main with
+      | CNode cnode ->
+          Array.for_all
+            (function
+              | Leaf { key; value } -> pred key value
+              | INode inner -> aux inner (SK k) (KSome (i, k, Eq)))
+            cnode.array
+      | TNode _ -> (
+          match parent with
+          | KSome (parent, k', Eq) ->
+              clean parent k' startgen;
+              for_all pred t)
+      | LNode list -> List.for_all (fun { key; value } -> pred key value) list
+    in
+    aux t.root ZK KNone
+
+  let rec iter f t =
+    let startgen = Kcas.get t.root.gen in
+    let rec aux :
+        type n1 n2.
+        ('a, n1) iNode ->
+        n1 kind ->
+        (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+        'b =
+     fun i k parent ->
+      match Kcas.get i.main with
+      | CNode cnode ->
+          Array.iter
             (function
               | Leaf { key; value } -> f key value
-              | INode inner -> aux inner (lvl + 5) (Some i))
+              | INode inner -> aux inner (SK k) (KSome (i, k, Eq)))
             cnode.array
-      | TNode _ ->
-          clean parent (lvl - 5) startgen;
-          reduce (array_fn, list_fn) f t
-      | LNode list -> list_fn (fun { key; value } -> f key value) list
+      | TNode _ -> (
+          match parent with
+          | KSome (parent, k', Eq) ->
+              clean parent k' startgen;
+              iter f t)
+      | LNode list -> List.iter (fun { key; value } -> f key value) list
     in
-    aux t.root 0 None
-
-  let exists pred = reduce (Array.exists, List.exists) pred
-  let for_all pred = reduce (Array.for_all, List.for_all) pred
-  let iter f = reduce (Array.iter, List.iter) f
+    aux t.root ZK KNone
 
   let rec fold f t init =
     let startgen = Kcas.get t.root.gen in
-    let rec aux acc i lvl parent =
+    let rec aux :
+        type n1 n2.
+        'a ->
+        ('b, n1) iNode ->
+        n1 kind ->
+        (('b, n2) iNode * n2 kind, n1) koption ->
+        'a =
+     fun acc i k parent_opt ->
       match Kcas.get i.main with
       | CNode cnode ->
           Array.fold_left
             (fun inner_acc branch ->
               match branch with
               | Leaf { key; value } -> f key value inner_acc
-              | INode inner -> aux inner_acc inner (lvl + 5) (Some i))
+              | INode inner -> aux inner_acc inner (SK k) (KSome (i, k)))
             acc cnode.array
-      | TNode _ ->
-          clean parent (lvl - 5) startgen;
-          fold f t init
+      | TNode _ -> (
+          match parent_opt with
+          | KSome (parent, k') ->
+              clean parent k' startgen;
+              fold f t init)
       | LNode list ->
           List.fold_left
             (fun inner_acc { key; value } -> f key value inner_acc)
             acc list
     in
-    aux init t.root 0 None
+    aux init t.root ZK KNone
 
   let save_as_dot (string_of_key, string_of_val) t filename =
     let oc = open_out filename in
@@ -536,7 +698,8 @@ module Make (H : Hashtbl.HashedType) = struct
          color=gold];\n"
         !iv (string_of_key leaf.key) (string_of_val leaf.value)
     in
-    let rec pr_inode inode =
+    let rec pr_inode : type n. ('a, n) iNode -> unit =
+     fun inode ->
       let self = !ii in
       ii := !ii + 1;
       Printf.fprintf oc "\tI%d [style=filled shape=box color=green2];\n" self;
@@ -551,7 +714,8 @@ module Make (H : Hashtbl.HashedType) = struct
       | LNode list ->
           Printf.fprintf oc "\tI%d -> L%d;\n" self !il;
           pr_list list
-    and pr_cnode cnode =
+    and pr_cnode : type n. ('a, n) cNode -> unit =
+     fun cnode ->
       let self = !ic in
       ic := self + 1;
       Array.iteri
