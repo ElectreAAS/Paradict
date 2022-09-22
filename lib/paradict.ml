@@ -131,8 +131,12 @@ module Make (H : Hashtbl.HashedType) = struct
    fun cnode k ->
     match k with
     | SK _ -> (
+        match Array.length cnode.array with
+        | 0 -> TNode None
+        | 1 -> (
         match cnode.array.(0) with
-        | Leaf l when Array.length cnode.array = 1 -> TNode (Some l)
+            | Leaf l -> TNode (Some l)
+            | _ -> CNode cnode)
         | _ -> CNode cnode)
     | _ -> CNode cnode
 
