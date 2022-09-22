@@ -57,10 +57,7 @@ module Make (H : Hashtbl.HashedType) = struct
   include Types
 
   (** Generational Double Compare Single Swap *)
-  let gen_dcss :
-      type n.
-      ('a, n) iNode -> ('a, n) mainNode -> ('a, n) mainNode -> gen -> bool =
-   fun inode old_m new_m gen ->
+  let gen_dcss inode old_m new_m gen =
     let cas = Kcas.mk_cas inode.main old_m new_m in
     let atomic_read = Kcas.mk_cas inode.gen gen gen in
     Kcas.kCAS [ cas; atomic_read ]
@@ -139,8 +136,7 @@ module Make (H : Hashtbl.HashedType) = struct
         | _ -> CNode cnode)
     | _ -> CNode cnode
 
-  let compress : type n. ('a, n) cNode -> n kind -> ('a, n) mainNode =
-   fun cnode k ->
+  let compress cnode k =
     let array =
       Array.filter_map
         (function
@@ -150,8 +146,7 @@ module Make (H : Hashtbl.HashedType) = struct
     in
     contract { cnode with array } k
 
-  let clean : type n. ('a, n) iNode -> n kind -> gen -> unit =
-   fun i k gen ->
+  let clean i k gen =
     match Kcas.get i.main with
     | CNode cnode as cn ->
         let _ignored =
@@ -166,9 +161,7 @@ module Make (H : Hashtbl.HashedType) = struct
     let new_array = Array.insert cnode.array pos (Leaf leaf) in
     { bmp = new_bitmap; array = new_array }
 
-  let cnode_with_update :
-      type n. ('a, n) cNode -> ('a, n) branch -> int -> ('a, n) cNode =
-   fun cnode branch pos ->
+  let cnode_with_update cnode branch pos =
     let array = Array.copy cnode.array in
     array.(pos) <- branch;
     { cnode with array }
@@ -200,7 +193,7 @@ module Make (H : Hashtbl.HashedType) = struct
           type n1 n2.
           ('a, n1) iNode ->
           n1 kind ->
-          (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+          (('a, n2) iNode * n2 kind, n1) koption ->
           'a =
        fun i k parent_opt ->
         match Kcas.get i.main with
@@ -211,7 +204,7 @@ module Make (H : Hashtbl.HashedType) = struct
               match cnode.array.(pos) with
               | INode inner ->
                   if Kcas.get inner.gen = startgen then
-                    aux inner (SK k) (KSome (i, k, Eq))
+                    aux inner (SK k) (KSome (i, k))
                   else if regenerate i cn pos (Kcas.get inner.main) startgen
                   then aux i k parent_opt
                   else loop ()
@@ -222,7 +215,7 @@ module Make (H : Hashtbl.HashedType) = struct
             leaf.value
         | TNode _ -> (
             match parent_opt with
-            | KSome (parent, k', Eq) ->
+            | KSome (parent, k') ->
                 clean parent k' startgen;
                 loop ())
       in
@@ -259,9 +252,7 @@ module Make (H : Hashtbl.HashedType) = struct
     INode { main = Kcas.ref new_main_node; gen = Kcas.ref gen }
 
   (** TODO: this might be cool to start asynchronously *)
-  let rec clean_parent :
-      type n. ('a, n) iNode -> n kind -> ('a, n s) iNode -> int -> gen -> unit =
-   fun parent k i hash startgen ->
+  let rec clean_parent parent k i hash startgen =
     if Kcas.get i.gen <> startgen then ()
     else
       let main = Kcas.get i.main in
@@ -282,6 +273,20 @@ module Make (H : Hashtbl.HashedType) = struct
                 then clean_parent parent k i hash startgen
             | _ -> ())
       | _ -> ()
+
+  let rec update_list key f = function
+    | [] -> (
+        match f None with
+        | None -> ([], false)
+        | Some v -> ([ { key; value = v } ], false))
+    | x :: xs ->
+        if H.equal x.key key then
+          match f (Some x.value) with
+          | Some v -> ({ key; value = v } :: xs, false)
+          | None -> (xs, true)
+        else
+          let updated, removed = update_list key f xs in
+          (x :: updated, removed)
 
   let update key f t =
     let hash = H.hash key in
@@ -363,21 +368,7 @@ module Make (H : Hashtbl.HashedType) = struct
                 clean parent k' startgen;
                 loop ())
         | LNode lst as ln ->
-            let rec update_list = function
-              | [] -> (
-                  match f None with
-                  | None -> ([], false)
-                  | Some v -> ([ { key; value = v } ], false))
-              | x :: xs ->
-                  if H.equal x.key key then
-                    match f (Some x.value) with
-                    | Some v -> ({ key; value = v } :: xs, false)
-                    | None -> (xs, true)
-                  else
-                    let updated, removed = update_list xs in
-                    (x :: updated, removed)
-            in
-            let new_list, changed = update_list lst in
+            let new_list, changed = update_list key f lst in
             let mainnode, needs_cleaning =
               match new_list with
               | [] -> (TNode None, true)
@@ -537,7 +528,7 @@ module Make (H : Hashtbl.HashedType) = struct
           type n1 n2.
           ('a, n1) iNode ->
           n1 kind ->
-          (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+          (('a, n2) iNode * n2 kind, n1) koption ->
           ('b, n1) iNode =
        fun i k parent_opt ->
         match Kcas.get i.main with
@@ -545,7 +536,7 @@ module Make (H : Hashtbl.HashedType) = struct
             let array =
               Array.map
                 (function
-                  | INode inner -> INode (aux inner (SK k) (KSome (i, k, Eq)))
+                  | INode inner -> INode (aux inner (SK k) (KSome (i, k)))
                   | Leaf { key; value } -> Leaf { key; value = f key value })
                 cnode.array
             in
@@ -555,7 +546,7 @@ module Make (H : Hashtbl.HashedType) = struct
             }
         | TNode _ -> (
             match parent_opt with
-            | KSome (parent, k', Eq) ->
+            | KSome (parent, k') ->
                 clean parent k' startgen;
                 raise Exit)
         | LNode list ->
@@ -576,7 +567,7 @@ module Make (H : Hashtbl.HashedType) = struct
         type n1 n2.
         ('a, n1) iNode ->
         n1 kind ->
-        (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+        (('a, n2) iNode * n2 kind, n1) koption ->
         'b =
      fun i k parent ->
       match Kcas.get i.main with
@@ -584,11 +575,11 @@ module Make (H : Hashtbl.HashedType) = struct
           Array.exists
             (function
               | Leaf { key; value } -> pred key value
-              | INode inner -> aux inner (SK k) (KSome (i, k, Eq)))
+              | INode inner -> aux inner (SK k) (KSome (i, k)))
             cnode.array
       | TNode _ -> (
           match parent with
-          | KSome (parent, k', Eq) ->
+          | KSome (parent, k') ->
               clean parent k' startgen;
               exists pred t)
       | LNode list -> List.exists (fun { key; value } -> pred key value) list
@@ -601,7 +592,7 @@ module Make (H : Hashtbl.HashedType) = struct
         type n1 n2.
         ('a, n1) iNode ->
         n1 kind ->
-        (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+        (('a, n2) iNode * n2 kind, n1) koption ->
         'b =
      fun i k parent ->
       match Kcas.get i.main with
@@ -609,11 +600,11 @@ module Make (H : Hashtbl.HashedType) = struct
           Array.for_all
             (function
               | Leaf { key; value } -> pred key value
-              | INode inner -> aux inner (SK k) (KSome (i, k, Eq)))
+              | INode inner -> aux inner (SK k) (KSome (i, k)))
             cnode.array
       | TNode _ -> (
           match parent with
-          | KSome (parent, k', Eq) ->
+          | KSome (parent, k') ->
               clean parent k' startgen;
               for_all pred t)
       | LNode list -> List.for_all (fun { key; value } -> pred key value) list
@@ -626,7 +617,7 @@ module Make (H : Hashtbl.HashedType) = struct
         type n1 n2.
         ('a, n1) iNode ->
         n1 kind ->
-        (('a, n2) iNode * n2 kind * (n1, n2 s) eq, n1) koption ->
+        (('a, n2) iNode * n2 kind, n1) koption ->
         'b =
      fun i k parent ->
       match Kcas.get i.main with
@@ -634,11 +625,11 @@ module Make (H : Hashtbl.HashedType) = struct
           Array.iter
             (function
               | Leaf { key; value } -> f key value
-              | INode inner -> aux inner (SK k) (KSome (i, k, Eq)))
+              | INode inner -> aux inner (SK k) (KSome (i, k)))
             cnode.array
       | TNode _ -> (
           match parent with
-          | KSome (parent, k', Eq) ->
+          | KSome (parent, k') ->
               clean parent k' startgen;
               iter f t)
       | LNode list -> List.iter (fun { key; value } -> f key value) list
