@@ -281,7 +281,7 @@ module Make (H : Hashtbl.HashedType) = struct
                 if not @@ gen_dcss parent cn (contract new_cnode k) startgen
                 then clean_parent parent k i hash startgen
             | _ -> ())
-      | _ -> failwith "GADT FIX 1"
+      | _ -> ()
 
   let update key f t =
     let hash = H.hash key in
@@ -352,12 +352,9 @@ module Make (H : Hashtbl.HashedType) = struct
                       | None -> false)
               in
               (if leaf_removed then
-               match Kcas.get i.main with
-               | LNode ([] | [ _ ]) | TNode _ -> (
-                   match parent_opt with
-                   | KSome (parent, k', Eq) ->
-                       clean_parent parent k' i hash startgen
-                   | KNone -> failwith "GADT FIX 2")
+               match (Kcas.get i.main, parent_opt) with
+               | (LNode ([] | [ _ ]) | TNode _), KSome (parent, k', Eq) ->
+                   clean_parent parent k' i hash startgen
                | _ -> ());
               leaf_removed
         | TNode _ -> (
