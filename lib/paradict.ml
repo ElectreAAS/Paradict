@@ -134,7 +134,7 @@ module Make (H : Hashtbl.HashedType) = struct
         match Array.length cnode.array with
         | 0 -> TNode None
         | 1 -> (
-        match cnode.array.(0) with
+            match cnode.array.(0) with
             | Leaf l -> TNode (Some l)
             | _ -> CNode cnode)
         | _ -> CNode cnode)
@@ -573,7 +573,7 @@ module Make (H : Hashtbl.HashedType) = struct
         n1 kind ->
         (('a, n2) iNode * n2 kind, n1) koption ->
         'b =
-     fun i k parent ->
+     fun i k parent_opt ->
       match Kcas.get i.main with
       | CNode cnode ->
           Array.exists
@@ -582,7 +582,7 @@ module Make (H : Hashtbl.HashedType) = struct
               | INode inner -> aux inner (SK k) (KSome (i, k)))
             cnode.array
       | TNode _ -> (
-          match parent with
+          match parent_opt with
           | KSome (parent, k') ->
               clean parent k' startgen;
               exists pred t)
@@ -598,7 +598,7 @@ module Make (H : Hashtbl.HashedType) = struct
         n1 kind ->
         (('a, n2) iNode * n2 kind, n1) koption ->
         'b =
-     fun i k parent ->
+     fun i k parent_opt ->
       match Kcas.get i.main with
       | CNode cnode ->
           Array.for_all
@@ -607,7 +607,7 @@ module Make (H : Hashtbl.HashedType) = struct
               | INode inner -> aux inner (SK k) (KSome (i, k)))
             cnode.array
       | TNode _ -> (
-          match parent with
+          match parent_opt with
           | KSome (parent, k') ->
               clean parent k' startgen;
               for_all pred t)
@@ -623,7 +623,7 @@ module Make (H : Hashtbl.HashedType) = struct
         n1 kind ->
         (('a, n2) iNode * n2 kind, n1) koption ->
         'b =
-     fun i k parent ->
+     fun i k parent_opt ->
       match Kcas.get i.main with
       | CNode cnode ->
           Array.iter
@@ -632,7 +632,7 @@ module Make (H : Hashtbl.HashedType) = struct
               | INode inner -> aux inner (SK k) (KSome (i, k)))
             cnode.array
       | TNode _ -> (
-          match parent with
+          match parent_opt with
           | KSome (parent, k') ->
               clean parent k' startgen;
               iter f t)
