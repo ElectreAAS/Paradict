@@ -93,7 +93,7 @@ module Make (H : Hashtbl.HashedType) = struct
     | TNode (Some l) | LNode [ l ] -> Some (Leaf l)
     | _ -> Some i
 
-  let contract cnode lvl =
+  let vertical_compact cnode lvl =
     if lvl > 0 then
       match Array.length cnode.array with
       | 0 -> TNode None
@@ -104,7 +104,7 @@ module Make (H : Hashtbl.HashedType) = struct
       | _ -> CNode cnode
     else CNode cnode
 
-  let compress cnode lvl =
+  let horizontal_compact cnode lvl =
     let array, l_filtered =
       Array.filter_map
         (function
@@ -113,7 +113,7 @@ module Make (H : Hashtbl.HashedType) = struct
         cnode.array
     in
     let bmp = remove_from_bitmap cnode.bmp l_filtered in
-    contract { array; bmp } lvl
+    vertical_compact { array; bmp } lvl
 
   let clean parent lvl startgen =
     match parent with
@@ -125,7 +125,7 @@ module Make (H : Hashtbl.HashedType) = struct
         | CNode cnode as cn ->
             let _ignored =
               (* TODO: it is ignored in the paper, but investigate if that is really wise *)
-              gen_dcss t cn (compress cnode lvl) startgen
+              gen_dcss t cn (horizontal_compact cnode lvl) startgen
             in
             ()
         | _ -> ())
@@ -231,7 +231,11 @@ module Make (H : Hashtbl.HashedType) = struct
                   | Some resurrected -> cnode_with_update cnode resurrected pos
                   | None -> cnode_with_delete cnode flag pos
                 in
-                if not @@ gen_dcss parent cn (contract new_cnode lvl) startgen
+                if
+                  not
+                  @@ gen_dcss parent cn
+                       (vertical_compact new_cnode lvl)
+                       startgen
                 then clean_parent parent i hash lvl startgen
             | _ -> ())
       | _ -> ()
@@ -278,7 +282,7 @@ module Make (H : Hashtbl.HashedType) = struct
                       | None ->
                           (* We need to remove this value *)
                           let new_cnode = cnode_with_delete cnode flag pos in
-                          let contracted = contract new_cnode lvl in
+                          let contracted = vertical_compact new_cnode lvl in
                           gen_dcss i cn contracted startgen || raise Exit
                     else
                       match f None with
