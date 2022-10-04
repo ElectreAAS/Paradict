@@ -178,12 +178,12 @@ module Make (H : Hashtbl.HashedType) = struct
                   else loop ()
               | Leaf leaf ->
                   if H.equal leaf.key key then leaf.value else raise Not_found)
+        | TNode _ | LNode ([] | [ _ ]) ->
+            clean parent (lvl - 5) startgen;
+            loop ()
         | LNode lst ->
             let leaf = List.find (fun l -> H.equal l.key key) lst in
             leaf.value
-        | TNode _ ->
-            clean parent (lvl - 5) startgen;
-            loop ()
       in
       aux t.root 0 None
     in
@@ -305,7 +305,7 @@ module Make (H : Hashtbl.HashedType) = struct
                (* 'parent = None' means i is the root, and the root can only have a cnode child. *)
                | _ -> ());
               leaf_removed
-        | TNode _ ->
+        | TNode _ | LNode ([] | [ _ ]) ->
             clean parent (lvl - 5) startgen;
             loop ()
         | LNode lst as ln ->
@@ -374,7 +374,7 @@ module Make (H : Hashtbl.HashedType) = struct
               | Leaf _ -> acc + 1
               | INode inner -> acc + aux inner (lvl + 5) (Some i))
             0 cnode.array
-      | TNode _ ->
+      | TNode _ | LNode ([] | [ _ ]) ->
           clean parent (lvl - 5) startgen;
           size t
       | LNode lst -> List.length lst
@@ -420,7 +420,7 @@ module Make (H : Hashtbl.HashedType) = struct
             | Some mainnode ->
                 if gen_dcss i cn mainnode startgen then Some (INode i)
                 else loop ())
-        | TNode _ ->
+        | TNode _ | LNode ([] | [ _ ]) ->
             clean parent (lvl - 5) startgen;
             loop ()
         | LNode list as ln -> (
@@ -460,7 +460,7 @@ module Make (H : Hashtbl.HashedType) = struct
               main = Kcas.ref (CNode { cnode with array });
               gen = Kcas.ref startgen;
             }
-        | TNode _ ->
+        | TNode _ | LNode ([] | [ _ ]) ->
             clean parent (lvl - 5) startgen;
             loop ()
         | LNode list ->
@@ -485,7 +485,7 @@ module Make (H : Hashtbl.HashedType) = struct
               | Leaf { key; value } -> f key value
               | INode inner -> aux inner (lvl + 5) (Some i))
             cnode.array
-      | TNode _ ->
+      | TNode _ | LNode ([] | [ _ ]) ->
           clean parent (lvl - 5) startgen;
           reduce (array_fn, list_fn) f t
       | LNode list -> list_fn (fun { key; value } -> f key value) list
@@ -507,7 +507,7 @@ module Make (H : Hashtbl.HashedType) = struct
               | Leaf { key; value } -> f key value inner_acc
               | INode inner -> aux inner_acc inner (lvl + 5) (Some i))
             acc cnode.array
-      | TNode _ ->
+      | TNode _ | LNode ([] | [ _ ]) ->
           clean parent (lvl - 5) startgen;
           fold f t init
       | LNode list ->
