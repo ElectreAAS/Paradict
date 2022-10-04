@@ -20,16 +20,17 @@ module Array = struct
       raise @@ Invalid_argument "Array.remove";
     init (length a - 1) (fun i -> if i < index then a.(i) else a.(i + 1))
 
-  (** [filter_map f a] applies [f] to all elements in [a], filtering [None] results, and returning the array of [Some] results. *)
+  (** [filter_map f a] applies [f] to all elements in [a], filtering [None] results,
+      and returning the array of [Some] results, along with a sorted list of the indices of deleted elements. *)
   let filter_map f a =
-    let rec aux i l =
-      if i >= length a then of_list @@ List.rev l
+    let rec aux i l_mapped l_filtered =
+      if i < 0 then (of_list l_mapped, l_filtered)
       else
         match f a.(i) with
-        | Some x -> aux (i + 1) (x :: l)
-        | None -> aux (i + 1) l
+        | Some x -> aux (i - 1) (x :: l_mapped) l_filtered
+        | None -> aux (i - 1) l_mapped (i :: l_filtered)
     in
-    aux 0 []
+    aux (length a - 1) [] []
 end
 
 module List = struct

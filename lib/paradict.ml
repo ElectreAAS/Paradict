@@ -84,7 +84,7 @@ module Make (H : Hashtbl.HashedType) = struct
         | 0l, _ -> aux (cursor + 1) bmp l_filtered seen
         | _, x :: xs when x = seen ->
             aux (cursor + 1) (Int32.logand bmp (Int32.lognot flag)) xs (seen + 1)
-          | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
+        | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
     in
     aux 0 bmp l_filtered 0
 
@@ -105,14 +105,15 @@ module Make (H : Hashtbl.HashedType) = struct
     else CNode cnode
 
   let compress cnode lvl =
-    let array =
+    let array, l_filtered =
       Array.filter_map
         (function
           | Leaf _ as l -> Some l
           | INode i as inner -> resurrect inner (Kcas.get i.main))
         cnode.array
     in
-    contract { cnode with array } lvl
+    let bmp = remove_from_bitmap cnode.bmp l_filtered in
+    contract { array; bmp } lvl
 
   let clean parent lvl startgen =
     match parent with
