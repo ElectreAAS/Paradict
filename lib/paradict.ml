@@ -79,17 +79,14 @@ module Make (H : Hashtbl.HashedType) = struct
       else
         let bit = Int32.shift_left 1l cursor in
         let flag = Int32.logand bit bmp in
-        if flag <> 0l then
-          match l_filtered with
-          | x :: xs when x = seen ->
-              aux (cursor + 1)
-                (Int32.logand bmp (Int32.lognot flag))
-                xs (seen + 1)
+        match (flag, l_filtered) with
+        | _, [] -> bmp
+        | 0l, _ -> aux (cursor + 1) bmp l_filtered seen
+        | _, x :: xs when x = seen ->
+            aux (cursor + 1) (Int32.logand bmp (Int32.lognot flag)) xs (seen + 1)
           | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
-        else aux (cursor + 1) bmp l_filtered seen
     in
-    let res = aux 0 bmp l_filtered 0 in
-    res
+    aux 0 bmp l_filtered 0
 
   let resurrect i = function
     | TNode None | LNode [] -> None
