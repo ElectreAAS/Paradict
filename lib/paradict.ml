@@ -37,11 +37,16 @@ module Make (H : Hashtbl.HashedType) = struct
 
     and 'a leaf = { key : key; value : 'a }
 
-    type ('a, 'b) status =
-      | Alright of 'a
-      | CleanBeforeDive
-      | CleanAfterDive of 'b
-      | GenChange
+    (** Inner return type of functions manipulating tries.
+        - Type {!'a} is returned if all goes well.
+        - Type {!'b} is returned when a cleaning needs to happen.
+        - Type {!'n} is the height of the trie, to ensure that [Clean*] can't bubble to the root.
+        - Type {!'c} marks the possibility of change, to ensure that {!CleanAfterDive} can't happen at all in read-only operations. *)
+    type (_, _, _, _) status =
+      | Alright : 'a -> ('a, 'b, 'n, 'c) status
+      | GenChange : ('a, 'b, 'n, 'c) status
+      | CleanBeforeDive : ('a, 'b, 'n s, 'c) status
+      | CleanAfterDive : 'b -> ('a, 'b, 'n s, 'c s) status
   end
 
   include Types
@@ -175,10 +180,11 @@ module Make (H : Hashtbl.HashedType) = struct
     let hash = H.hash key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux : type n. ('a, n) iNode -> n pInt -> ('a, _) status =
+      let rec aux : type n. ('a, n) iNode -> n pInt -> ('a, _, n, z) status =
        fun i lvl ->
         match Kcas.get i.main with
-        | TNode _ | LNode ([] | [ _ ]) -> CleanBeforeDive
+        | TNode _ -> CleanBeforeDive
+        | LNode ([] | [ _ ]) -> CleanBeforeDive
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
             if Int32.logand flag cnode.bmp = 0l then raise Not_found
@@ -190,7 +196,7 @@ module Make (H : Hashtbl.HashedType) = struct
                     | CleanBeforeDive ->
                         clean i cn cnode lvl startgen;
                         aux i lvl
-                    | other -> other
+                    | (Alright _ | GenChange) as other -> other
                   else if
                     regenerate i cn cnode pos (Kcas.get inner.main) startgen
                   then aux i lvl
@@ -202,11 +208,7 @@ module Make (H : Hashtbl.HashedType) = struct
             let leaf = List.find (fun l -> H.equal l.key key) lst in
             Alright leaf.value
       in
-      match aux t.root Z with
-      | Alright v -> v
-      | GenChange -> loop ()
-      | CleanBeforeDive | CleanAfterDive _ ->
-          failwith "Cannot happen, solve with GADT (1.0)"
+      match aux t.root Z with Alright v -> v | GenChange -> loop ()
     in
     loop ()
 
@@ -242,10 +244,12 @@ module Make (H : Hashtbl.HashedType) = struct
     let hash = H.hash key in
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux : type n. ('a, n) iNode -> n pInt -> (unit, unit) status =
+      let rec aux :
+          type n. ('a, n) iNode -> n pInt -> (unit, unit, n, z s) status =
        fun i lvl ->
         match Kcas.get i.main with
-        | TNode _ | LNode ([] | [ _ ]) -> CleanBeforeDive
+        | TNode _ -> CleanBeforeDive
+        | LNode ([] | [ _ ]) -> CleanBeforeDive
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
             if Int32.logand flag cnode.bmp = 0l then
@@ -270,7 +274,7 @@ module Make (H : Hashtbl.HashedType) = struct
                     | CleanAfterDive () ->
                         clean i cn cnode lvl startgen;
                         Alright ()
-                    | other -> other
+                    | (Alright _ | GenChange) as other -> other
                   else if
                     regenerate i cn cnode pos (Kcas.get inner.main) startgen
                   then aux i lvl
@@ -335,11 +339,7 @@ module Make (H : Hashtbl.HashedType) = struct
               if needs_cleaning then CleanAfterDive () else Alright ()
             else GenChange
       in
-      match aux t.root Z with
-      | Alright () -> ()
-      | GenChange -> loop ()
-      | CleanBeforeDive | CleanAfterDive _ ->
-          failwith "Cannot happen, solve with GADT (1.1)"
+      match aux t.root Z with Alright () -> () | GenChange -> loop ()
     in
     loop ()
 
@@ -365,17 +365,18 @@ module Make (H : Hashtbl.HashedType) = struct
   let filter_map_inplace f t =
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux : type n. ('a, n) iNode -> n pInt -> (('a, n) iNode, _) status
-          =
+      let rec aux :
+          type n. ('a, n) iNode -> n pInt -> (('a, n) iNode, _, n, z s) status =
        fun i lvl ->
         match Kcas.get i.main with
-        | TNode _ | LNode ([] | [ _ ]) -> CleanBeforeDive
+        | TNode _ -> CleanBeforeDive
+        | LNode ([] | [ _ ]) -> CleanBeforeDive
         | CNode cnode as cn -> (
             let rec inner_loop :
                 ('a, n) branch list ->
                 int list ->
                 int ->
-                (('a, n) mainNode, _) status =
+                (('a, n) mainNode, _, n s, z) status =
              fun l_mapped l_filtered pos ->
               if pos < 0 then
                 match (l_mapped, lvl) with
@@ -397,7 +398,7 @@ module Make (H : Hashtbl.HashedType) = struct
                           inner_loop (Leaf leaf :: l_mapped) l_filtered (pos - 1)
                       | CleanAfterDive None ->
                           inner_loop l_mapped (pos :: l_filtered) (pos - 1)
-                      | (CleanBeforeDive | GenChange) as res -> res
+                      | (GenChange | CleanBeforeDive) as other -> other
                     else GenChange
                 | Leaf { key; value } -> (
                     match f key value with
@@ -416,7 +417,7 @@ module Make (H : Hashtbl.HashedType) = struct
             | CleanBeforeDive ->
                 clean i cn cnode lvl startgen;
                 aux i lvl
-            | (GenChange | CleanAfterDive _) as err -> err)
+            | GenChange -> GenChange)
         | LNode list as ln ->
             let new_list =
               List.filter_map
@@ -438,24 +439,23 @@ module Make (H : Hashtbl.HashedType) = struct
               | None -> Alright i
             else GenChange
       in
-      match aux t.root Z with
-      | Alright _ -> ()
-      | GenChange -> loop ()
-      | CleanBeforeDive | CleanAfterDive _ ->
-          failwith "Cannot happen, solve with GADT (1.2)"
+      match aux t.root Z with Alright _ -> () | GenChange -> loop ()
     in
     loop ()
 
   let map f t =
     let rec loop () =
       let startgen = Kcas.get t.root.gen in
-      let rec aux : type n. ('a, n) iNode -> n pInt -> (('b, n) iNode, _) status
-          =
+      let rec aux :
+          type n. ('a, n) iNode -> n pInt -> (('b, n) iNode, _, n, z) status =
        fun i lvl ->
         match Kcas.get i.main with
-        | TNode _ | LNode ([] | [ _ ]) -> CleanBeforeDive
+        | TNode _ -> CleanBeforeDive
+        | LNode ([] | [ _ ]) -> CleanBeforeDive
         | CNode cnode as cn -> (
-            let rec inner_loop lst pos =
+            let rec inner_loop :
+                ('b, n) branch list -> int -> (('b, n) iNode, _, n, z) status =
+             fun lst pos ->
               if pos < 0 then
                 let array = Array.of_list lst in
                 Alright
@@ -470,13 +470,14 @@ module Make (H : Hashtbl.HashedType) = struct
                       (Leaf { key; value = f key value } :: lst)
                       (pos - 1)
                 | INode inner ->
-                    if Kcas.get inner.gen = startgen then
+                    if Kcas.get inner.gen = startgen then (
                       match aux inner (S lvl) with
                       | Alright inode ->
                           inner_loop (INode inode :: lst) (pos - 1)
-                      | (GenChange | CleanBeforeDive | CleanAfterDive _) as err
-                        ->
-                          err
+                      | GenChange -> GenChange
+                      | CleanBeforeDive ->
+                          clean i cn cnode lvl startgen;
+                          aux i lvl)
                     else if
                       regenerate i cn cnode pos (Kcas.get inner.main) startgen
                     then aux i lvl
@@ -496,22 +497,21 @@ module Make (H : Hashtbl.HashedType) = struct
             Alright
               { main = Kcas.ref (LNode new_list); gen = Kcas.ref startgen }
       in
-      match aux t.root Z with
-      | Alright m -> m
-      | GenChange -> loop ()
-      | CleanBeforeDive | CleanAfterDive _ ->
-          failwith "Cannot happen, solve with GADT (1.3)"
+      match aux t.root Z with Alright m -> m | GenChange -> loop ()
     in
     { root = loop () }
 
   let rec reduce f ?(short_circuiting = fun _ -> false) init t =
     let startgen = Kcas.get t.root.gen in
-    let rec aux : type n. _ -> ('a, n) iNode -> n pInt -> (_, _) status =
+    let rec aux : type n. 'b -> ('a, n) iNode -> n pInt -> ('b, _, n, z) status
+        =
      fun acc i lvl ->
       match Kcas.get i.main with
-      | TNode _ | LNode ([] | [ _ ]) -> CleanBeforeDive
+      | TNode _ -> CleanBeforeDive
+      | LNode ([] | [ _ ]) -> CleanBeforeDive
       | CNode cnode as cn -> (
-          let rec inner_loop inner_acc pos =
+          let rec inner_loop : _ -> int -> (_, _, n, z) status =
+           fun inner_acc pos ->
             if pos < 0 then Alright inner_acc
             else
               match cnode.array.(pos) with
@@ -520,12 +520,15 @@ module Make (H : Hashtbl.HashedType) = struct
                   if short_circuiting elem then Alright elem
                   else inner_loop elem (pos - 1)
               | INode inner ->
-                  if Kcas.get inner.gen = startgen then
+                  if Kcas.get inner.gen = startgen then (
                     match aux inner_acc inner (S lvl) with
                     | Alright elem ->
                         if short_circuiting elem then Alright elem
                         else inner_loop elem (pos - 1)
-                    | err -> err
+                    | GenChange -> GenChange
+                    | CleanBeforeDive ->
+                        clean i cn cnode lvl startgen;
+                        aux acc i lvl)
                   else if
                     regenerate i cn cnode pos (Kcas.get inner.main) startgen
                   then aux acc i lvl
@@ -549,8 +552,6 @@ module Make (H : Hashtbl.HashedType) = struct
     match aux init t.root Z with
     | Alright res -> res
     | GenChange -> reduce f ~short_circuiting init t
-    | CleanBeforeDive | CleanAfterDive _ ->
-        failwith "Cannot happen, solve with GADT (1.4)"
 
   let exists pred =
     reduce (fun k v _ -> pred k v) ~short_circuiting:Fun.id false
