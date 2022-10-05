@@ -72,24 +72,22 @@ module Make (H : Hashtbl.HashedType) = struct
     if not @@ gen_dcss t.root (Kcas.get t.root.main) empty_mnode startgen then
       clear t
 
-  let rec int_of_pInt : type n. n pInt -> int = function
-    | Z -> 0
-    | S n -> 5 + int_of_pInt n
-
-  (* We only use 5 bits of the hash, depending on the level in the tree.
-     Note that [lvl] is always a multiple of 5. (5 = log2 32) *)
+  (* At each level in the trie, we only use 5 bits of the hash. *)
   let hash_to_flag lvl hash =
-    let lvl = int_of_pInt lvl in
-    if lvl > Sys.int_size then None
+    let rec depth_of_pInt : type n. n pInt -> int = function
+      | Z -> 0
+      | S n -> 5 + depth_of_pInt n
+    in
+    let depth = depth_of_pInt lvl in
+    if depth > Sys.int_size then None
     else
       let mask = 0x1F in
-      let shifted = hash lsr lvl in
+      let shifted = hash lsr depth in
       let relevant = shifted land mask in
       Some (Int32.shift_left 1l relevant)
 
-  (** [flag] is a single bit flag (never 0)
-
-      [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap *)
+  (** {ul {- [flag] is a single bit flag (never 0)}
+          {- [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap}} *)
   let flagpos lvl bitmap hash =
     match hash_to_flag lvl hash with
     | Some flag ->
