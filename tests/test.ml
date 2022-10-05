@@ -96,8 +96,8 @@ let fmi_with_bad_h =
   add "one" 1 numbers;
   add "two" 2 numbers;
   filter_map_inplace (fun _ _ -> None) numbers;
-  Alcotest.(check int) "FMI should properly set size to 0" 0 (size numbers);
   Alcotest.(check bool) "FMI should properly empty trie" true (is_empty numbers);
+  Alcotest.(check int) "FMI should properly set size to 0" 0 (size numbers);
   ()
 
 let fold_test =
@@ -176,6 +176,7 @@ let size_empty =
   done;
   Alcotest.(check bool)
     "After a full removal, root should be empty" true (is_empty numbers);
+  Alcotest.(check int) "After a full removal, size should be 0" 0 (size numbers);
   ()
 
 let collisions = [ collision_mem; size_empty ]
