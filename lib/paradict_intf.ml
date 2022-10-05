@@ -34,8 +34,7 @@ module type S = sig
       The original map can still be used, even in concurrent contexts. *)
 
   val is_empty : 'a t -> bool
-  (** Return [true] if the map contains no data.
-      Result might not be accurate in concurrent contexts. Take a snapshot first! *)
+  (** Return [true] if the map contains no data. *)
 
   val size : 'a t -> int
   (** Return the number of elements in the map.
@@ -59,9 +58,8 @@ module type S = sig
 
   val filter_map_inplace : (key -> 'a -> 'a option) -> 'a t -> unit
   (** [filter_map_inplace f t] applies [f] to all mappings, updating them depending on the result of [f k v], in unspecified order.
-
-      If [f] returns [None], the mapping is removed.
-      If [f] is side-effecting, those effects may happen an unspecified number of times, as operations are restarted in case of CAS conflicts.
+      - If [f] returns [None], the mapping is removed.
+      - If [f] is side-effecting, those effects may happen an unspecified number of times, as operations are restarted in case of CAS conflicts.
       Use a pure function instead. *)
 
   val exists : (key -> 'a -> bool) -> 'a t -> bool
