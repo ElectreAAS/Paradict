@@ -29,7 +29,7 @@ module Make (H : Hashtbl.HashedType) = struct
       | TNode : 'a leaf option -> ('a, 'n s) mainNode
       | LNode : 'a leaf list -> ('a, 'n s) mainNode
 
-    and ('a, 'n) cNode = { bmp : Int32.t; array : ('a, 'n) branch array }
+    and ('a, 'n) cNode = { bmp : int; array : ('a, 'n) branch array }
 
     and (_, _) branch =
       | INode : ('a, 'n s) iNode -> ('a, 'n) branch
@@ -61,22 +61,24 @@ module Make (H : Hashtbl.HashedType) = struct
     {
       root =
         {
-          main = Kcas.ref (CNode { bmp = 0l; array = [||] });
+          main = Kcas.ref (CNode { bmp = 0; array = [||] });
           gen = Kcas.ref (object end);
         };
     }
 
   let rec clear t =
     let startgen = Kcas.get t.root.gen in
-    let empty_mnode = CNode { bmp = 0l; array = [||] } in
+    let empty_mnode = CNode { bmp = 0; array = [||] } in
     if not @@ gen_dcss t.root (Kcas.get t.root.main) empty_mnode startgen then
       clear t
 
-  (* At each level in the trie, we only use 5 bits of the hash. *)
+  (* At each level in the trie, we only use 6 bits of the hash. *)
+  let shift_offset = 6
+
   let hash_to_flag lvl hash =
     let rec depth_of_pInt : type n. n pInt -> int = function
       | Z -> 0
-      | S n -> 5 + depth_of_pInt n
+      | S n -> shift_offset + depth_of_pInt n
     in
     let depth = depth_of_pInt lvl in
     if depth > Sys.int_size then None
@@ -84,30 +86,29 @@ module Make (H : Hashtbl.HashedType) = struct
       let mask = 0x1F in
       let shifted = hash lsr depth in
       let relevant = shifted land mask in
-      Some (Int32.shift_left 1l relevant)
+      Some (1 lsl relevant)
 
   (** {ul {- [flag] is a single bit flag (never 0)}
           {- [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap}} *)
   let flagpos lvl bitmap hash =
     match hash_to_flag lvl hash with
     | Some flag ->
-        let open Int32 in
-        let pos = pred flag |> logand bitmap |> popcount in
+        let pos = pred flag land bitmap |> popcount in
         (flag, pos)
     | None -> failwith "Maximum depth reached but flagpos was still used???"
 
   (* This function assumes l_filtered is sorted and it only contains valid indexes *)
   let remove_from_bitmap bmp l_filtered =
     let rec aux cursor bmp l_filtered seen =
-      if cursor >= 32 then bmp
+      if cursor >= Sys.int_size then bmp
       else
-        let bit = Int32.shift_left 1l cursor in
-        let flag = Int32.logand bit bmp in
+        let bit = 1 lsl cursor in
+        let flag = bit land bmp in
         match (flag, l_filtered) with
         | _, [] -> bmp
-        | 0l, _ -> aux (cursor + 1) bmp l_filtered seen
+        | 0, _ -> aux (cursor + 1) bmp l_filtered seen
         | _, x :: xs when x = seen ->
-            aux (cursor + 1) (Int32.logand bmp (Int32.lognot flag)) xs (seen + 1)
+            aux (cursor + 1) (bmp lxor flag) xs (seen + 1)
         | _ -> aux (cursor + 1) bmp l_filtered (seen + 1)
     in
     aux 0 bmp l_filtered 0
@@ -146,7 +147,7 @@ module Make (H : Hashtbl.HashedType) = struct
     ignore @@ gen_dcss i old_m new_cnode startgen
 
   let cnode_with_insert cnode leaf flag pos =
-    let new_bitmap = Int32.logor cnode.bmp flag in
+    let new_bitmap = cnode.bmp lor flag in
     let new_array = Array.insert cnode.array pos (Leaf leaf) in
     { bmp = new_bitmap; array = new_array }
 
@@ -156,7 +157,7 @@ module Make (H : Hashtbl.HashedType) = struct
     { cnode with array }
 
   let cnode_with_delete cnode flag pos =
-    let bmp = Int32.logxor cnode.bmp flag in
+    let bmp = cnode.bmp lxor flag in
     let array = Array.remove cnode.array pos in
     { bmp; array }
 
@@ -185,7 +186,7 @@ module Make (H : Hashtbl.HashedType) = struct
         | LNode ([] | [ _ ]) -> CleanBeforeDive
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
-            if Int32.logand flag cnode.bmp = 0l then raise Not_found
+            if flag land cnode.bmp = 0 then raise Not_found
             else
               match cnode.array.(pos) with
               | INode inner ->
@@ -222,9 +223,9 @@ module Make (H : Hashtbl.HashedType) = struct
     let new_main_node =
       match (flag1, flag2) with
       | Some flag1, Some flag2 ->
-          let bmp = Int32.logor flag1 flag2 in
+          let bmp = flag1 lor flag2 in
           let array =
-            match Int32.unsigned_compare flag1 flag2 with
+            match compare flag1 flag2 with
             | 0 ->
                 (* Collision on this level, we need to go deeper *)
                 [| branch_of_pair (l1, h1) (l2, h2) (S lvl) gen |]
@@ -250,7 +251,7 @@ module Make (H : Hashtbl.HashedType) = struct
         | LNode ([] | [ _ ]) -> CleanBeforeDive
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
-            if Int32.logand flag cnode.bmp = 0l then
+            if flag land cnode.bmp = 0 then
               (* No flag collision, the key isn't in the map. *)
               match f None with
               | Some value ->
@@ -358,7 +359,7 @@ module Make (H : Hashtbl.HashedType) = struct
   let copy = snapshot
 
   let is_empty t =
-    match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0l
+    match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0
 
   let filter_map_inplace f t =
     let rec loop () =
@@ -569,7 +570,7 @@ module Make (H : Hashtbl.HashedType) = struct
     Printf.fprintf oc
       "digraph {\n\troot [shape=plaintext];\n\troot -> I0 [style=dotted];\n";
     let pr_cnode_info cnode =
-      Printf.fprintf oc "\tC%d [shape=record label=\"<bmp> 0x%lX" !ic cnode.bmp;
+      Printf.fprintf oc "\tC%d [shape=record label=\"<bmp> 0x%X" !ic cnode.bmp;
       Array.iteri (fun i _ -> Printf.fprintf oc "|<i%d> ·" i) cnode.array;
       Printf.fprintf oc "\"];\n"
     in

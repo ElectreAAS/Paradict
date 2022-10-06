@@ -49,15 +49,11 @@ module List = struct
     aux l
 end
 
-module Int32 = struct
-  include Int32
-
-  let popcount n =
-    let rec aux n count =
-      if n = 0l then count
-      else
-        let shifted = shift_right_logical n 1 in
-        if logand 1l n <> 0l then aux shifted (count + 1) else aux shifted count
-    in
-    aux n 0
-end
+let popcount n =
+  let rec aux n count =
+    if n = 0 then count
+    else
+      let shifted = n lsr 1 in
+      if 1 land n <> 0 then aux shifted (count + 1) else aux shifted count
+  in
+  aux n 0
