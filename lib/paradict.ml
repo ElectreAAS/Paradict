@@ -79,20 +79,16 @@ module Make (H : Hashtbl.HashedType) = struct
   let lvl_mask = 0x1F
 
   let hash_to_flag lvl hash =
-    if lvl > Sys.int_size then None
-    else
-      let shifted = hash lsr lvl in
-      let relevant = shifted land lvl_mask in
-      Some (1 lsl relevant)
+    let shifted = hash lsr lvl in
+    let relevant = shifted land lvl_mask in
+    1 lsl relevant
 
   (** {ul {- [flag] is a single bit flag (never 0)}
           {- [pos] is an index in the array, hence it satisfies 0 <= pos <= popcount bitmap}} *)
   let flagpos lvl bitmap hash =
-    match hash_to_flag lvl hash with
-    | Some flag ->
-        let pos = pred flag land bitmap |> popcount in
-        (flag, pos)
-    | None -> failwith "Maximum depth reached but flagpos was still used???"
+    let flag = hash_to_flag lvl hash in
+    let pos = pred flag land bitmap |> popcount in
+    (flag, pos)
 
   (* This function assumes l_filtered is sorted and it only contains valid indexes *)
   let remove_from_bitmap bmp l_filtered =
@@ -215,24 +211,24 @@ module Make (H : Hashtbl.HashedType) = struct
   let rec branch_of_pair :
       type n. 'a leaf * int -> 'a leaf * int -> int -> gen -> ('a, n) branch =
    fun (l1, h1) (l2, h2) lvl gen ->
-    let flag1 = hash_to_flag lvl h1 in
-    let flag2 = hash_to_flag lvl h2 in
     let new_main_node =
-      match (flag1, flag2) with
-      | Some flag1, Some flag2 ->
-          let bmp = flag1 lor flag2 in
-          let array =
-            match compare flag1 flag2 with
-            | 0 ->
-                (* Collision on this level, we need to go deeper *)
-                [| branch_of_pair (l1, h1) (l2, h2) (lvl + lvl_offset) gen |]
-            | 1 -> [| Leaf l2; Leaf l1 |]
-            | _ -> [| Leaf l1; Leaf l2 |]
-          in
-          CNode { bmp; array }
-      | _ ->
-          (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
-          LNode [ l1; l2 ]
+      if lvl > Sys.int_size then
+        (* Maximum depth reached, it's a full hash collision. We just dump everything into a list. *)
+        LNode [ l1; l2 ]
+      else
+        let flag1 = hash_to_flag lvl h1 in
+        let flag2 = hash_to_flag lvl h2 in
+
+        let bmp = flag1 lor flag2 in
+        let array =
+          match compare flag1 flag2 with
+          | 0 ->
+              (* Collision on this level, we need to go deeper *)
+              [| branch_of_pair (l1, h1) (l2, h2) (lvl + lvl_offset) gen |]
+          | 1 -> [| Leaf l2; Leaf l1 |]
+          | _ -> [| Leaf l1; Leaf l2 |]
+        in
+        CNode { bmp; array }
     in
     INode { main = Kcas.ref new_main_node; gen = Kcas.ref gen }
 
