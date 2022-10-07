@@ -144,9 +144,9 @@ module Make (H : Hashtbl.HashedType) = struct
     ignore @@ gen_dcss i old_m new_cnode startgen
 
   let cnode_with_insert cnode leaf flag pos =
-    let new_bitmap = cnode.bmp lor flag in
-    let new_array = Array.insert cnode.array pos (Leaf leaf) in
-    { bmp = new_bitmap; array = new_array }
+    let bmp = cnode.bmp lor flag in
+    let array = Array.insert cnode.array pos (Leaf leaf) in
+    { bmp; array }
 
   let cnode_with_update cnode branch pos =
     let array = Array.copy cnode.array in
