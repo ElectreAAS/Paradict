@@ -136,8 +136,8 @@ module Make (H : Hashtbl.HashedType) = struct
     vertical_compact { array; bmp } lvl
 
   let clean i old_m cnode lvl startgen =
-    let new_cnode = horizontal_compact cnode lvl in
-    ignore @@ gen_dcss i old_m new_cnode startgen
+    let new_mainnode = horizontal_compact cnode lvl in
+    ignore @@ gen_dcss i old_m new_mainnode startgen
 
   let cnode_with_insert cnode leaf flag pos =
     let bmp = cnode.bmp lor flag in
@@ -153,6 +153,17 @@ module Make (H : Hashtbl.HashedType) = struct
     let bmp = cnode.bmp lxor flag in
     let array = Array.remove cnode.array pos in
     { bmp; array }
+
+  let clean_one i cn cnode flag pos lvl inner startgen =
+    let new_mainnode =
+      match Kcas.get inner.main with
+      | TNode (Some l) | LNode [ l ] ->
+          CNode (cnode_with_update cnode (Leaf l) pos)
+      | TNode None | LNode [] ->
+          vertical_compact (cnode_with_delete cnode flag pos) lvl
+      | _ -> cn
+    in
+    ignore @@ gen_dcss i cn new_mainnode startgen
 
   (** [regen i old_m cnode pos child_main new_gen] updates the generation of the immediate child
       [cnode.array.(pos)] of [i] to [new_gen].
@@ -187,7 +198,7 @@ module Make (H : Hashtbl.HashedType) = struct
                   if Kcas.get inner.gen = startgen then
                     match aux inner NZ (lvl + lvl_offset) with
                     | CleanBeforeDive ->
-                        clean i cn cnode k startgen;
+                        clean_one i cn cnode flag pos k inner startgen;
                         aux i k lvl
                     | (Alright _ | GenChange) as other -> other
                   else if
@@ -218,7 +229,6 @@ module Make (H : Hashtbl.HashedType) = struct
       else
         let flag1 = hash_to_flag lvl h1 in
         let flag2 = hash_to_flag lvl h2 in
-
         let bmp = flag1 lor flag2 in
         let array =
           match compare flag1 flag2 with
@@ -261,10 +271,10 @@ module Make (H : Hashtbl.HashedType) = struct
                   if Kcas.get inner.gen = startgen then
                     match aux inner NZ (lvl + lvl_offset) with
                     | CleanBeforeDive ->
-                        clean i cn cnode k startgen;
+                        clean_one i cn cnode flag pos k inner startgen;
                         aux i k lvl
                     | CleanAfterDive () ->
-                        clean i cn cnode k startgen;
+                        clean_one i cn cnode flag pos k inner startgen;
                         Alright ()
                     | (Alright _ | GenChange) as other -> other
                   else if
