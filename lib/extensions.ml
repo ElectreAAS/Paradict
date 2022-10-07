@@ -2,23 +2,28 @@ module Array = struct
   include Array
 
   (** Inserts an element at position index within the array, shifting all elements after it to the right.
-      @raise Invalid_argument
-      if index is outside the range 0 to length a. *)
+      @raise Invalid_argument if index is outside the range 0 to length a. *)
   let insert a index elem =
-    if index < 0 || index > length a then
-      raise @@ Invalid_argument "Array.insert";
-    init
-      (length a + 1)
-      (fun i ->
-        match compare i index with 0 -> elem | 1 -> a.(i - 1) | _ -> a.(i))
+    let len = length a in
+    if index < 0 || index > len then invalid_arg "Array.insert";
+    let new_a = make (len + 1) elem in
+    blit a 0 new_a 0 index;
+    blit a index new_a (index + 1) (len - index);
+    new_a
 
   (** Remove an element at position index within the array, shifting all elements after it to the left.
-      @raise Invalid_argument
-      if index is outside the range 0 to length a or if a is empty *)
+      @raise Invalid_argument if index is outside the range 0 to length a. *)
   let remove a index =
-    if index < 0 || index >= length a || length a = 0 then
-      raise @@ Invalid_argument "Array.remove";
-    init (length a - 1) (fun i -> if i < index then a.(i) else a.(i + 1))
+    let len = length a in
+    match index with
+    | 0 -> sub a 1 (len - 1)
+    | n when n = len - 1 -> sub a 0 (len - 1)
+    | n when n < 0 || n >= len -> invalid_arg "Array.remove"
+    | n ->
+        let new_a = make (len - 1) a.(0) in
+        blit a 0 new_a 0 n;
+        blit a (n + 1) new_a n (len - n - 1);
+        new_a
 
   (** [filter_map f a] applies [f] to all elements in [a], filtering [None] results,
       and returning the array of [Some] results, along with a sorted list of the indices of deleted elements. *)
