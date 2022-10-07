@@ -6,6 +6,7 @@ open Paradict.Make (struct
 end)
 
 let nb = 10_000
+let is_prime _ n = n = 2 (* I swear it's a valid prime-checker *)
 let nb_domains = 8
 
 let mem_empty =
@@ -58,14 +59,12 @@ let mi =
   for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
-  filter_map_inplace
-    (fun _ i -> if i <= nb / 2 then Some i else Some (-i))
-    numbers;
+  filter_map_inplace (fun _ i -> Some (if i <= nb / 2 then i else -i)) numbers;
   for i = 1 to nb do
     let found = find_opt (string_of_int i) numbers in
-    let expected = if i <= nb / 2 then i else -i in
+    let expected = Some (if i <= nb / 2 then i else -i) in
     Alcotest.(check (option int))
-      "FMI should perform in-place modifications" (Some expected) found
+      "FMI should perform in-place modifications" expected found
   done
 
 let fmi =
@@ -126,7 +125,6 @@ let exists_test =
   for i = 1 to nb do
     add (string_of_int i) i numbers
   done;
-  let is_prime _ n = n = 42 (* I swear it's prime *) in
   let result = exists is_prime numbers in
   Alcotest.(check bool) "Exists should find a prime number" true result;
   let is_big _ n = n = nb * 4 in
