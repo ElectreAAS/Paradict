@@ -8,7 +8,7 @@ digraph {
 	C0:i0 -> V0;
 	C0:i1 -> I1;
 	I1 [style=filled shape=box color=green2];
-	C1 [shape=record label="<bmp> 0x6000|<i0> ·|<i1> ·"];
+	C1 [shape=record label="<bmp> 0x18000000|<i0> ·|<i1> ·"];
 	I1 -> C1:bmp;
 	V1 [shape=Mrecord label="<key> Mount & Blade|<val> 4" style=filled color=gold];
 	C1:i0 -> V1;
@@ -26,7 +26,7 @@ digraph {
 	C0:i6 -> V7;
 	C0:i7 -> I2;
 	I2 [style=filled shape=box color=green2];
-	C2 [shape=record label="<bmp> 0x1100000|<i0> ·|<i1> ·"];
+	C2 [shape=record label="<bmp> 0x10100|<i0> ·|<i1> ·"];
 	I2 -> C2:bmp;
 	V8 [shape=Mrecord label="<key> Luigi's Mansion|<val> 14" style=filled color=gold];
 	C2:i0 -> V8;

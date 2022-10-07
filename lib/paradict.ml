@@ -72,15 +72,17 @@ module Make (H : Hashtbl.HashedType) = struct
     if not @@ gen_dcss t.root (Kcas.get t.root.main) empty_mnode startgen then
       clear t
 
-  (** At each level in the trie, we only use 6 bits of the hash. *)
-  let lvl_offset = 6
+  (** At each level in the trie, we only use 5 bits of the hash. *)
+  let lvl_offset = 5
+
+  (** 2^5 - 1 = 31 = 0x1F*)
+  let lvl_mask = 0x1F
 
   let hash_to_flag lvl hash =
     if lvl > Sys.int_size then None
     else
-      let mask = 0x1F in
       let shifted = hash lsr lvl in
-      let relevant = shifted land mask in
+      let relevant = shifted land lvl_mask in
       Some (1 lsl relevant)
 
   (** {ul {- [flag] is a single bit flag (never 0)}
