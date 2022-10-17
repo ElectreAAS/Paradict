@@ -106,11 +106,6 @@ module Make (H : Hashtbl.HashedType) = struct
     in
     aux 0 bmp l_filtered 0
 
-  let resurrect i = function
-    | TNode None -> None
-    | TNode (Some l) -> Some (Leaf l)
-    | _ -> Some i
-
   let vertical_compact :
       type n.
       ('a, n) iNode ->
@@ -139,7 +134,11 @@ module Make (H : Hashtbl.HashedType) = struct
       Array.filter_map
         (function
           | Leaf _ as l -> Some l
-          | INode i as inner -> resurrect inner (Kcas.get i.main))
+          | INode i as inner -> (
+              match Kcas.get i.main with
+              | TNode None -> None
+              | TNode (Some l) -> Some (Leaf l)
+              | _ -> Some inner))
         cnode.array
     in
     let bmp = remove_from_bitmap cnode.bmp l_filtered in
