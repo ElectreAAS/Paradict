@@ -248,6 +248,126 @@ module Make (H : Hashtbl.HashedType) = struct
     in
     INode { main = Kcas.ref new_m; gen = Kcas.ref gen }
 
+  let add key value t =
+    let hash = H.hash key in
+    let rec loop () =
+      let startgen = Kcas.get t.root.gen in
+      let rec aux :
+          type n. ('a, n) iNode -> n kind -> int -> (unit, 'a, n, z) status =
+       fun i k lvl ->
+        match Kcas.get i.main with
+        | TNode l -> CleanBeforeDive l
+        | CNode cnode as cn -> (
+            let flag, pos = flagpos lvl cnode.bmp hash in
+            if flag land cnode.bmp = 0 then
+              (* No flag collision, the key isn't in the map. *)
+              (* We need to insert it. *)
+              let new_cnode = cnode_with_insert cnode { key; value } flag pos in
+              if gen_dcss i cn (CNode new_cnode) startgen then Alright ()
+              else GenChange
+            else
+              match cnode.array.(pos) with
+              | INode inner ->
+                  if Kcas.get inner.gen == startgen then
+                    match aux inner NZ (lvl + lvl_offset) with
+                    | CleanBeforeDive l ->
+                        ignore @@ clean_one i cn cnode flag pos k l startgen;
+                        aux i k lvl
+                    | (Alright _ | GenChange) as other -> other
+                  else if
+                    regenerate i cn cnode pos (Kcas.get inner.main) startgen
+                  then aux i k lvl
+                  else GenChange
+              | Leaf l ->
+                  if H.equal l.key key then
+                    (* We found a value to be updated. *)
+                    let new_cnode =
+                      cnode_with_update cnode (Leaf { key; value }) pos
+                    in
+                    if gen_dcss i cn (CNode new_cnode) startgen then Alright ()
+                    else GenChange
+                  else
+                    (* We create a new entry colliding with a leaf, so we create a new level. *)
+                    let new_pair =
+                      branch_of_pair
+                        (l, H.hash l.key)
+                        ({ key; value }, hash)
+                        (lvl + lvl_offset) startgen
+                    in
+                    let new_cnode = cnode_with_update cnode new_pair pos in
+                    if gen_dcss i cn (CNode new_cnode) startgen then Alright ()
+                    else GenChange)
+        | LNode lst as ln ->
+            let rec add_to_list = function
+              | [] -> [ { key; value } ]
+              | x :: xs ->
+                  if H.equal x.key key then { key; value } :: xs
+                  else x :: add_to_list xs
+            in
+            if gen_dcss i ln (LNode (add_to_list lst)) startgen then Alright ()
+            else GenChange
+      in
+      match aux t.root Z 0 with Alright () -> () | GenChange -> loop ()
+    in
+    loop ()
+
+  let remove key t =
+    let hash = H.hash key in
+    let rec loop () =
+      let startgen = Kcas.get t.root.gen in
+      let rec aux :
+          type n. ('a, n) iNode -> n kind -> int -> (unit, 'a, n, nz) status =
+       fun i k lvl ->
+        match Kcas.get i.main with
+        | TNode l -> CleanBeforeDive l
+        | CNode cnode as cn -> (
+            let flag, pos = flagpos lvl cnode.bmp hash in
+            if flag land cnode.bmp = 0 then
+              (* No flag collision, the key isn't in the map. *)
+              Alright ()
+            else
+              match cnode.array.(pos) with
+              | INode inner ->
+                  if Kcas.get inner.gen == startgen then
+                    match aux inner NZ (lvl + lvl_offset) with
+                    | CleanBeforeDive l ->
+                        ignore @@ clean_one i cn cnode flag pos k l startgen;
+                        aux i k lvl
+                    | CleanAfterDive l ->
+                        clean_one i cn cnode flag pos k l startgen
+                    | (Alright _ | GenChange) as other -> other
+                  else if
+                    regenerate i cn cnode pos (Kcas.get inner.main) startgen
+                  then aux i k lvl
+                  else GenChange
+              | Leaf l ->
+                  if H.equal l.key key then
+                    (* We need to remove this value *)
+                    let new_cnode = cnode_with_delete cnode flag pos in
+                    let cas_success, status =
+                      vertical_compact i cn new_cnode k startgen
+                    in
+                    if not cas_success then GenChange else status
+                  else (* The key isn't in the map. *)
+                    Alright ())
+        | LNode lst as ln ->
+            let rec remove_from_list = function
+              | [] -> []
+              | x :: xs ->
+                  if H.equal x.key key then xs else x :: remove_from_list xs
+            in
+            let new_list = remove_from_list lst in
+            let new_m, status =
+              match new_list with
+              | [ l ] -> (TNode (Some l), CleanAfterDive (Some l))
+              | _ -> (LNode new_list, Alright ())
+            in
+            if gen_dcss i ln new_m startgen then status else GenChange
+      in
+      match aux t.root Z 0 with Alright () -> () | GenChange -> loop ()
+    in
+    loop ()
+
   let update key f t =
     let hash = H.hash key in
     let rec loop () =
@@ -343,9 +463,6 @@ module Make (H : Hashtbl.HashedType) = struct
       match aux t.root Z 0 with Alright () -> () | GenChange -> loop ()
     in
     loop ()
-
-  let add key value t = update key (fun _ -> Some value) t
-  let remove key t = update key (fun _ -> None) t
 
   let rec snapshot t =
     let main = Kcas.get t.root.main in
