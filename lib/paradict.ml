@@ -10,13 +10,13 @@ module Make (H : Hashtbl.HashedType) = struct
 
     type 'a t = { root : ('a, z) iNode }
 
-    and gen = < >
-    (** The type of generations is an empty object.
+    and gen = unit ref
+    (** The type of generations, an empty ref cell.
 
         This is a classic OCaml trick to ensure safe (in)equality:
         With this setup
-        [let x = object end;; let y = object end;; let z = x;;]
-        [x = y] is false but [x = z] is true.
+        [let x = ref ();; let y = ref ();; let z = x;;]
+        [x == y] is false but [x == z] is true.
         This avoids integer overflow and discarded gen objects will be garbage collected. *)
 
     and ('a, 'n) iNode = {
@@ -62,7 +62,7 @@ module Make (H : Hashtbl.HashedType) = struct
       root =
         {
           main = Kcas.ref (CNode { bmp = 0; array = [||] });
-          gen = Kcas.ref (object end);
+          gen = Kcas.ref (ref ());
         };
     }
 
@@ -201,7 +201,7 @@ module Make (H : Hashtbl.HashedType) = struct
             else
               match cnode.array.(pos) with
               | INode inner ->
-                  if Kcas.get inner.gen = startgen then
+                  if Kcas.get inner.gen == startgen then
                     match aux inner NZ (lvl + lvl_offset) with
                     | CleanBeforeDive l ->
                         ignore @@ clean_one i cn cnode flag pos k l startgen;
@@ -273,7 +273,7 @@ module Make (H : Hashtbl.HashedType) = struct
             else
               match cnode.array.(pos) with
               | INode inner ->
-                  if Kcas.get inner.gen = startgen then
+                  if Kcas.get inner.gen == startgen then
                     match aux inner NZ (lvl + lvl_offset) with
                     | CleanBeforeDive l ->
                         ignore @@ clean_one i cn cnode flag pos k l startgen;
@@ -349,13 +349,13 @@ module Make (H : Hashtbl.HashedType) = struct
 
   let rec snapshot t =
     let main = Kcas.get t.root.main in
+    let gen = Kcas.get t.root.gen in
     let atomic_read = Kcas.mk_cas t.root.main main main in
     (* The old root is updated to a new generation *)
-    let cas = Kcas.mk_cas t.root.gen (Kcas.get t.root.gen) (object end) in
+    let cas = Kcas.mk_cas t.root.gen gen (ref ()) in
     if Kcas.kCAS [ cas; atomic_read ] then
-      (* We can return a new root with a second new generation *)
-      (* TODO: investigate why 2 new generations *)
-      { root = { main = Kcas.ref main; gen = Kcas.ref (object end) } }
+      (* We can return a new root with the old contents *)
+      { root = { main = Kcas.ref main; gen = Kcas.ref gen } }
     else snapshot t
 
   let copy = snapshot
@@ -389,7 +389,7 @@ module Make (H : Hashtbl.HashedType) = struct
               else
                 match cnode.array.(pos) with
                 | INode inner ->
-                    if Kcas.get inner.gen = startgen then
+                    if Kcas.get inner.gen == startgen then
                       match aux inner NZ with
                       | Alright inode ->
                           inner_loop (INode inode :: l_mapped) l_filtered
@@ -466,7 +466,7 @@ module Make (H : Hashtbl.HashedType) = struct
                       (Leaf { key; value = f key value } :: lst)
                       (pos - 1)
                 | INode inner ->
-                    if Kcas.get inner.gen = startgen then (
+                    if Kcas.get inner.gen == startgen then (
                       match aux inner NZ with
                       | Alright inode ->
                           inner_loop (INode inode :: lst) (pos - 1)
@@ -515,7 +515,7 @@ module Make (H : Hashtbl.HashedType) = struct
                   if short_circuiting elem then Alright elem
                   else inner_loop elem (pos - 1)
               | INode inner ->
-                  if Kcas.get inner.gen = startgen then (
+                  if Kcas.get inner.gen == startgen then (
                     match aux inner_acc inner NZ with
                     | Alright elem ->
                         if short_circuiting elem then Alright elem
