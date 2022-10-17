@@ -8,6 +8,18 @@ module Int = struct
   let hash t = Hashtbl.hash t
 end
 
+module StrMap = Map.Make (struct
+  type t = string
+
+  let compare = compare
+end)
+
+module IntMap = Map.Make (struct
+  type t = int
+
+  let compare = compare
+end)
+
 module type S = sig
   type key
   type 'a t
@@ -59,25 +71,32 @@ module Naive = struct
   let fold fn t z = with_lock t @@ fun () -> H.fold fn t.tbl z
 end
 
-let bench name metric f =
+let bench name domains is_left map f =
   let clock = Mtime_clock.counter () in
   let result = f () in
   let elapsed = Mtime.Span.to_ms (Mtime_clock.count clock) in
-  Format.printf
-    {|{"results": [{"name": %S, "metrics": [{"name": %S, "value": %f, "units": "ms"}]}]}@.|}
-    name metric elapsed;
+  let set = StrMap.find name !map in
+  let new_set =
+    IntMap.update domains
+      (fun prev ->
+        let other = Option.value prev ~default:(0.0, 0.0) in
+        Some (if is_left then (elapsed, snd other) else (fst other, elapsed)))
+      set
+  in
+  map := StrMap.add name new_set !map;
   result
 
 module T = Domainslib.Task
 
 module Test
     (P : S with type key = int) (Config : sig
-      val target : string
-      val name : string
+      val is_left : bool
+      val domains : int
       val pool : T.pool
+      val map : (float * float) IntMap.t StrMap.t ref
     end) =
 struct
-  let bench metric f = bench Config.target (metric ^ "/" ^ Config.name) f
+  let bench name f = bench name Config.domains Config.is_left Config.map f
   let iter start finish body = T.parallel_for Config.pool ~start ~finish ~body
 
   let t =
@@ -87,12 +106,8 @@ struct
     t
 
   let () =
-    bench "find_opt: Some" @@ fun () ->
-    iter 1 nb (fun i -> ignore @@ P.find_opt i t)
-
-  let () =
-    bench "find_opt: None" @@ fun () ->
-    iter (nb + 1) (2 * nb) (fun i -> ignore @@ P.find_opt i t)
+    bench "find_opt" @@ fun () ->
+    iter (nb / 2) (3 * nb / 2) (fun i -> ignore @@ P.find_opt i t)
 
   let () =
     bench "update" @@ fun () ->
@@ -111,15 +126,15 @@ struct
   let () =
     bench "fold" @@ fun () -> ignore @@ P.fold (fun k _ acc -> acc + k) t 0
 
-  let () =
-    bench "remove: all" @@ fun () -> iter 1 nb (fun i -> P.remove (2 * i) t)
+  let () = bench "remove" @@ fun () -> iter 1 nb (fun i -> P.remove (2 * i) t)
 end
 
-let run ~target (module P : S with type key = int) domains =
+let run is_left (module P : S with type key = int) domains map =
   let module Config = struct
-    let target = target
-    let name = string_of_int domains
+    let is_left = is_left
+    let domains = domains
     let pool = T.setup_pool ~num_additional_domains:(domains - 1) ()
+    let map = map
   end in
   T.run Config.pool (fun () ->
       let module Run = Test (P) (Config) in
@@ -127,9 +142,32 @@ let run ~target (module P : S with type key = int) domains =
   T.teardown_pool Config.pool
 
 let () =
+  let results =
+    StrMap.singleton "add" IntMap.empty
+    |> StrMap.add "find_opt" IntMap.empty
+    |> StrMap.add "update" IntMap.empty
+    |> StrMap.add "filter_map_inplace" IntMap.empty
+    |> StrMap.add "iter" IntMap.empty
+    |> StrMap.add "fold" IntMap.empty
+    |> StrMap.add "remove" IntMap.empty
+    |> ref
+  in
   for domains = 1 to max_domains do
-    Format.printf "@.## Benchmark with %i domains:@." domains;
-    run ~target:"Paradict" (module P) domains;
-    Format.printf "@.";
-    run ~target:"Hashtbl" (module Naive) domains
-  done
+    run true (module P) domains results;
+    run false (module Naive) domains results
+  done;
+  let print name =
+    let set = StrMap.find name !results in
+    for i = 1 to max_domains do
+      let p, h = IntMap.find i set in
+      Format.printf "%d %f %f@." i p h
+    done;
+    Format.printf "@.@."
+  in
+  print "add";
+  print "find_opt";
+  print "update";
+  print "filter_map_inplace";
+  print "iter";
+  print "fold";
+  print "remove"
