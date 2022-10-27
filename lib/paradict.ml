@@ -578,7 +578,7 @@ module Make (H : Hashtbl.HashedType) = struct
     let rec pr_inode : type n. ('a, n) iNode -> unit =
      fun inode ->
       let self = !ii in
-      ii := !ii + 1;
+      incr ii;
       Printf.fprintf oc "\tI%d [style=filled shape=box color=green2];\n" self;
       match Kcas.get inode.main with
       | CNode cnode ->
@@ -594,7 +594,7 @@ module Make (H : Hashtbl.HashedType) = struct
     and pr_cnode : type n. ('a, n) cNode -> unit =
      fun cnode ->
       let self = !ic in
-      ic := self + 1;
+      incr ic;
       Array.iteri
         (fun i b ->
           match b with
@@ -604,7 +604,7 @@ module Make (H : Hashtbl.HashedType) = struct
           | Leaf leaf ->
               pr_leaf_info leaf;
               Printf.fprintf oc "\tC%d:i%d -> V%d;\n" self i !iv;
-              iv := !iv + 1)
+              incr iv)
         cnode.array
     and pr_tnode leaf =
       Printf.fprintf oc
@@ -613,18 +613,18 @@ module Make (H : Hashtbl.HashedType) = struct
       | Some leaf ->
           pr_leaf_info leaf;
           Printf.fprintf oc "\tT%d -> V%d;\n" !it !iv;
-          iv := !iv + 1
+          incr iv
       | None -> ());
-      it := !it + 1
+      incr it
     and pr_list list =
       Printf.fprintf oc "\tL%d [style=filled fontcolor=white color=red];\n" !il;
       List.iter
         (fun l ->
           pr_leaf_info l;
           Printf.fprintf oc "\tL%d -> V%d [color=red style=bold];\n" !il !iv;
-          iv := !iv + 1)
+          incr iv)
         list;
-      il := !il + 1
+      incr il
     in
     pr_inode t.root;
     Printf.fprintf oc "}\n%!";
