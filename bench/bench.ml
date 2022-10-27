@@ -142,15 +142,22 @@ let run is_left (module P : S with type key = int) domains map =
   T.teardown_pool Config.pool
 
 let () =
+  let operations =
+    [
+      "add";
+      "find_opt";
+      "update";
+      "filter_map_inplace";
+      "iter";
+      "fold";
+      "remove";
+    ]
+  in
   let results =
-    StrMap.singleton "add" IntMap.empty
-    |> StrMap.add "find_opt" IntMap.empty
-    |> StrMap.add "update" IntMap.empty
-    |> StrMap.add "filter_map_inplace" IntMap.empty
-    |> StrMap.add "iter" IntMap.empty
-    |> StrMap.add "fold" IntMap.empty
-    |> StrMap.add "remove" IntMap.empty
-    |> ref
+    ref
+    @@ List.fold_left
+         (fun m op -> StrMap.add op IntMap.empty m)
+         StrMap.empty operations
   in
   for domains = 1 to max_domains do
     run true (module P) domains results;
@@ -164,10 +171,4 @@ let () =
     done;
     Format.printf "@.@."
   in
-  print "add";
-  print "find_opt";
-  print "update";
-  print "filter_map_inplace";
-  print "iter";
-  print "fold";
-  print "remove"
+  List.iter print operations

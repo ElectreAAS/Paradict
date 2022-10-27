@@ -1,0 +1,44 @@
+set terminal pngcairo truecolor size 500,500
+set output 'test_add.png'
+set style data histogram
+set style histogram clustered
+set style fill solid 1.0 border lt -1
+set boxwidth 0.7 relative
+set style fill transparent solid 0.5
+set key at graph 1.05, 1.12
+set xlabel "CPUs"
+set ylabel "time (ms)"
+set title "Add 100k elements" offset -18
+set xrange [0.3:8.5]
+plot 'data.txt' index 0 using ($1-0.2):3 with boxes title "Hashtbl.Make(Int) with lock" linetype rgb "red", \
+  'data.txt' index 0 using 1:2 with boxes title "Paradict.Make(Int)" linetype rgb "blue"
+
+set title "Find 100k elements" offset -17
+set output 'test_find.png'
+plot 'data.txt' index 1 using ($1-0.2):3 with boxes title "Hashtbl.Make(Int) with lock" linetype rgb "red", \
+  'data.txt' index 1 using 1:2 with boxes title "Paradict.Make(Int)" linetype rgb "blue"
+
+set title "Update 100k elements" offset -17
+set output 'test_update.png'
+plot 'data.txt' index 2 using ($1-0.2):3 with boxes title "Hashtbl.Make(Int) with lock" linetype rgb "red", \
+  'data.txt' index 2 using 1:2 with boxes title "Paradict.Make(Int)" linetype rgb "blue"  
+
+set title "FMI on 100k elements" offset -17
+set output 'test_fmi.png'
+plot 'data.txt' index 3 using ($1-0.2):3 with boxes title "Hashtbl.Make(Int) with lock" linetype rgb "red", \
+  'data.txt' index 3 using 1:2 with boxes title "Paradict.Make(Int)" linetype rgb "blue"
+
+set title "Iter on 100k elements" offset -17
+set output 'test_iter.png'
+plot 'data.txt' index 4 using ($1-0.2):3 with boxes title "Hashtbl.Make(Int) with lock" linetype rgb "red", \
+  'data.txt' index 4 using 1:2 with boxes title "Paradict.Make(Int)" linetype rgb "blue"
+
+set title "Fold on 100k elements" offset -17
+set output 'test_fold.png'
+plot 'data.txt' index 5 using ($1-0.2):3 with boxes title "Hashtbl.Make(Int) with lock" linetype rgb "red", \
+  'data.txt' index 5 using 1:2 with boxes title "Paradict.Make(Int)" linetype rgb "blue"
+
+set title "Remove 100k elements" offset -17
+set output 'test_remove.png'
+plot 'data.txt' index 6 using ($1-0.2):3 with boxes title "Hashtbl.Make(Int) with lock" linetype rgb "red", \
+  'data.txt' index 6 using 1:2 with boxes title "Paradict.Make(Int)" linetype rgb "blue"
