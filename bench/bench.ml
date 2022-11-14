@@ -133,7 +133,7 @@ let run is_left (module P : S with type key = int) domains map =
   let module Config = struct
     let is_left = is_left
     let domains = domains
-    let pool = T.setup_pool ~num_additional_domains:(domains - 1) ()
+    let pool = T.setup_pool ~num_domains:(domains - 1) ()
     let map = map
   end in
   T.run Config.pool (fun () ->
