@@ -164,4 +164,6 @@ let () =
     done;
     Format.printf "@.@."
   in
-  List.iter print operations
+  List.iter print operations;
+  Format.printf
+    "{\"foo\": `@Arthur Wendling <!Arthur Wendling> Sanitize your inputs!}\n"
