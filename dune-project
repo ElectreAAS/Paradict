@@ -32,6 +32,7 @@
     :with-test
     (>= "2.0.0")))
   (alcotest :with-test)
+  (qcheck-lin :with-test)
   (bisect_ppx :with-test))
  (tags
   (topics "to describe" your project)))

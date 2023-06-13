@@ -1,3 +1,9 @@
 (test
  (name test)
+ (modules test)
  (libraries alcotest paradict))
+
+(test
+ (name foo)
+ (modules foo)
+ (libraries paradict qcheck-lin.domain))
