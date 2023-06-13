@@ -74,7 +74,7 @@ end
 let bench name domains is_left map f =
   let clock = Mtime_clock.counter () in
   let result = f () in
-  let elapsed = Mtime.Span.to_ms (Mtime_clock.count clock) in
+  let elapsed = Mtime.Span.to_float_ns (Mtime_clock.count clock) /. 1e6 in
   let set = StrMap.find name !map in
   let new_set =
     IntMap.update domains

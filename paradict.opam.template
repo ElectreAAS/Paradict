@@ -1,3 +1,0 @@
-pin-depends: [
-  ["kcas.0.14" "git+https://github.com/ocaml-multicore/kcas#master"]
-]

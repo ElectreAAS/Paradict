@@ -2,5 +2,7 @@
  (public_name paradict)
  (name paradict)
  (libraries kcas)
+ (flags
+  (:standard -w -37))
  (instrumentation
   (backend bisect_ppx)))

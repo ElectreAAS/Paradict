@@ -4,8 +4,8 @@ include Paradict_intf
 module Make (H : Hashtbl.HashedType) = struct
   module Types = struct
     type key = H.t
-    type z = Zero [@@warning "-37"]
-    type nz = NonZero [@@warning "-37"]
+    type z = Zero
+    type nz = NonZero
     type _ kind = Z : z kind | NZ : nz kind
 
     type 'a t = { root : ('a, z) iNode }
@@ -20,8 +20,8 @@ module Make (H : Hashtbl.HashedType) = struct
         This avoids integer overflow and discarded gen objects will be garbage collected. *)
 
     and ('a, 'n) iNode = {
-      main : ('a, 'n) mainNode Kcas.ref;
-      gen : gen Kcas.ref;
+      main : ('a, 'n) mainNode Kcas.Loc.t;
+      gen : gen Kcas.Loc.t;
     }
 
     and (_, _) mainNode =
@@ -53,24 +53,26 @@ module Make (H : Hashtbl.HashedType) = struct
 
   (** Generational Double Compare Single Swap *)
   let gen_dcss inode old_m new_m gen =
-    let cas = Kcas.mk_cas inode.main old_m new_m in
-    let atomic_read = Kcas.mk_cas inode.gen gen gen in
-    Kcas.kCAS [ cas; atomic_read ]
+    let cas = Kcas.Op.make_cas inode.main old_m new_m in
+    let atomic_read = Kcas.Op.make_cmp inode.gen gen in
+    Kcas.Op.atomically [ cas; atomic_read ]
 
   let create () =
     {
       root =
         {
-          main = Kcas.ref (CNode { bmp = 0; array = [||] });
-          gen = Kcas.ref (ref ());
+          main = Kcas.Loc.make (CNode { bmp = 0; array = [||] });
+          gen = Kcas.Loc.make (ref ());
         };
     }
 
-  let rec clear t =
-    let startgen = Kcas.get t.root.gen in
+  let clear t =
     let empty_mnode = CNode { bmp = 0; array = [||] } in
-    if not @@ gen_dcss t.root (Kcas.get t.root.main) empty_mnode startgen then
-      clear t
+    let tx ~xt =
+      let _read = Kcas.Xt.get ~xt t.root.gen in
+      Kcas.Xt.set ~xt t.root.main empty_mnode
+    in
+    Kcas.Xt.commit { tx }
 
   (** At each level in the trie, we only use 5 bits of the hash. *)
   let lvl_offset = 5
@@ -135,7 +137,7 @@ module Make (H : Hashtbl.HashedType) = struct
         (function
           | Leaf _ as l -> Some l
           | INode i as inner -> (
-              match Kcas.get i.main with
+              match Kcas.Loc.get i.main with
               | TNode None -> None
               | TNode (Some l) -> Some (Leaf l)
               | _ -> Some inner))
@@ -180,7 +182,7 @@ module Make (H : Hashtbl.HashedType) = struct
   let regenerate i old_m cnode pos child_main new_gen =
     let new_cnode =
       cnode_with_update cnode
-        (INode { main = Kcas.ref child_main; gen = Kcas.ref new_gen })
+        (INode { main = Kcas.Loc.make child_main; gen = Kcas.Loc.make new_gen })
         pos
     in
     gen_dcss i old_m (CNode new_cnode) new_gen
@@ -188,11 +190,11 @@ module Make (H : Hashtbl.HashedType) = struct
   let find key t =
     let hash = H.hash key in
     let rec loop () =
-      let startgen = Kcas.get t.root.gen in
+      let startgen = Kcas.Loc.get t.root.gen in
       let rec aux :
           type n. ('a, n) iNode -> n kind -> int -> ('a, 'a, n, z) status =
        fun i k lvl ->
-        match Kcas.get i.main with
+        match Kcas.Loc.get i.main with
         | TNode l -> CleanBeforeDive l
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
@@ -200,14 +202,14 @@ module Make (H : Hashtbl.HashedType) = struct
             else
               match cnode.array.(pos) with
               | INode inner ->
-                  if Kcas.get inner.gen == startgen then
+                  if Kcas.Loc.get inner.gen == startgen then
                     match aux inner NZ (lvl + lvl_offset) with
                     | CleanBeforeDive l ->
                         ignore @@ clean_one i cn cnode flag pos k l startgen;
                         aux i k lvl
                     | (Alright _ | GenChange) as other -> other
                   else if
-                    regenerate i cn cnode pos (Kcas.get inner.main) startgen
+                    regenerate i cn cnode pos (Kcas.Loc.get inner.main) startgen
                   then aux i k lvl
                   else GenChange
               | Leaf leaf ->
@@ -245,16 +247,16 @@ module Make (H : Hashtbl.HashedType) = struct
         in
         CNode { bmp; array }
     in
-    INode { main = Kcas.ref new_m; gen = Kcas.ref gen }
+    INode { main = Kcas.Loc.make new_m; gen = Kcas.Loc.make gen }
 
   let update key f t =
     let hash = H.hash key in
     let rec loop () =
-      let startgen = Kcas.get t.root.gen in
+      let startgen = Kcas.Loc.get t.root.gen in
       let rec aux :
           type n. ('a, n) iNode -> n kind -> int -> (unit, 'a, n, nz) status =
        fun i k lvl ->
-        match Kcas.get i.main with
+        match Kcas.Loc.get i.main with
         | TNode l -> CleanBeforeDive l
         | CNode cnode as cn -> (
             let flag, pos = flagpos lvl cnode.bmp hash in
@@ -272,7 +274,7 @@ module Make (H : Hashtbl.HashedType) = struct
             else
               match cnode.array.(pos) with
               | INode inner ->
-                  if Kcas.get inner.gen == startgen then
+                  if Kcas.Loc.get inner.gen == startgen then
                     match aux inner NZ (lvl + lvl_offset) with
                     | CleanBeforeDive l ->
                         ignore @@ clean_one i cn cnode flag pos k l startgen;
@@ -281,7 +283,7 @@ module Make (H : Hashtbl.HashedType) = struct
                         clean_one i cn cnode flag pos k l startgen
                     | (Alright _ | GenChange) as other -> other
                   else if
-                    regenerate i cn cnode pos (Kcas.get inner.main) startgen
+                    regenerate i cn cnode pos (Kcas.Loc.get inner.main) startgen
                   then aux i k lvl
                   else GenChange
               | Leaf l -> (
@@ -346,29 +348,26 @@ module Make (H : Hashtbl.HashedType) = struct
   let add key value t = update key (fun _ -> Some value) t
   let remove key t = update key (fun _ -> None) t
 
-  let rec snapshot t =
-    let main = Kcas.get t.root.main in
-    let gen = Kcas.get t.root.gen in
-    let atomic_read = Kcas.mk_cas t.root.main main main in
-    (* The old root is updated to a new generation *)
-    let cas = Kcas.mk_cas t.root.gen gen (ref ()) in
-    if Kcas.kCAS [ cas; atomic_read ] then
-      (* We can return a new root with the old contents *)
-      { root = { main = Kcas.ref main; gen = Kcas.ref gen } }
-    else snapshot t
+  let snapshot t =
+    let open Kcas in
+    let tx ~xt =
+      (Xt.get ~xt t.root.main, Xt.exchange ~xt t.root.gen (ref ()))
+    in
+    let main, gen = Xt.commit { tx } in
+    { root = { main = Loc.make main; gen = Loc.make gen } }
 
   let copy = snapshot
 
   let is_empty t =
-    match Kcas.get t.root.main with CNode cnode -> cnode.bmp = 0
+    match Kcas.Loc.get t.root.main with CNode cnode -> cnode.bmp = 0
 
   let filter_map_inplace f t =
     let rec loop () =
-      let startgen = Kcas.get t.root.gen in
+      let startgen = Kcas.Loc.get t.root.gen in
       let rec aux :
           type n. ('a, n) iNode -> n kind -> (('a, n) iNode, 'a, n, nz) status =
        fun i k ->
-        match Kcas.get i.main with
+        match Kcas.Loc.get i.main with
         | TNode l -> CleanBeforeDive l
         | CNode cnode as cn -> (
             let rec inner_loop :
@@ -388,7 +387,7 @@ module Make (H : Hashtbl.HashedType) = struct
               else
                 match cnode.array.(pos) with
                 | INode inner ->
-                    if Kcas.get inner.gen == startgen then
+                    if Kcas.Loc.get inner.gen == startgen then
                       match aux inner NZ with
                       | Alright inode ->
                           inner_loop (INode inode :: l_mapped) l_filtered
@@ -441,11 +440,11 @@ module Make (H : Hashtbl.HashedType) = struct
 
   let map f t =
     let rec loop () =
-      let startgen = Kcas.get t.root.gen in
+      let startgen = Kcas.Loc.get t.root.gen in
       let rec aux :
           type n. ('a, n) iNode -> n kind -> (('b, n) iNode, 'a, n, z) status =
        fun i k ->
-        match Kcas.get i.main with
+        match Kcas.Loc.get i.main with
         | TNode l -> CleanBeforeDive l
         | CNode cnode as cn -> (
             let rec inner_loop :
@@ -455,8 +454,8 @@ module Make (H : Hashtbl.HashedType) = struct
                 let array = Array.of_list lst in
                 Alright
                   {
-                    main = Kcas.ref (CNode { cnode with array });
-                    gen = Kcas.ref startgen;
+                    main = Kcas.Loc.make (CNode { cnode with array });
+                    gen = Kcas.Loc.make startgen;
                   }
               else
                 match cnode.array.(pos) with
@@ -465,7 +464,7 @@ module Make (H : Hashtbl.HashedType) = struct
                       (Leaf { key; value = f key value } :: lst)
                       (pos - 1)
                 | INode inner ->
-                    if Kcas.get inner.gen == startgen then (
+                    if Kcas.Loc.get inner.gen == startgen then (
                       match aux inner NZ with
                       | Alright inode ->
                           inner_loop (INode inode :: lst) (pos - 1)
@@ -474,7 +473,8 @@ module Make (H : Hashtbl.HashedType) = struct
                           clean i cn cnode k startgen;
                           aux i k)
                     else if
-                      regenerate i cn cnode pos (Kcas.get inner.main) startgen
+                      regenerate i cn cnode pos (Kcas.Loc.get inner.main)
+                        startgen
                     then aux i k
                     else GenChange
             in
@@ -490,18 +490,21 @@ module Make (H : Hashtbl.HashedType) = struct
                 list
             in
             Alright
-              { main = Kcas.ref (LNode new_list); gen = Kcas.ref startgen }
+              {
+                main = Kcas.Loc.make (LNode new_list);
+                gen = Kcas.Loc.make startgen;
+              }
       in
       match aux t.root Z with Alright m -> m | GenChange -> loop ()
     in
     { root = loop () }
 
   let rec reduce f ?(short_circuiting = fun _ -> false) init t =
-    let startgen = Kcas.get t.root.gen in
+    let startgen = Kcas.Loc.get t.root.gen in
     let rec aux : type n. 'b -> ('a, n) iNode -> n kind -> ('b, _, n, z) status
         =
      fun acc i k ->
-      match Kcas.get i.main with
+      match Kcas.Loc.get i.main with
       | TNode l -> CleanBeforeDive l
       | CNode cnode as cn -> (
           let rec inner_loop : _ -> int -> (_, _, n, z) status =
@@ -514,7 +517,7 @@ module Make (H : Hashtbl.HashedType) = struct
                   if short_circuiting elem then Alright elem
                   else inner_loop elem (pos - 1)
               | INode inner ->
-                  if Kcas.get inner.gen == startgen then (
+                  if Kcas.Loc.get inner.gen == startgen then (
                     match aux inner_acc inner NZ with
                     | Alright elem ->
                         if short_circuiting elem then Alright elem
@@ -524,7 +527,7 @@ module Make (H : Hashtbl.HashedType) = struct
                         clean i cn cnode k startgen;
                         aux acc i k)
                   else if
-                    regenerate i cn cnode pos (Kcas.get inner.main) startgen
+                    regenerate i cn cnode pos (Kcas.Loc.get inner.main) startgen
                   then aux acc i k
                   else GenChange
           in
@@ -580,7 +583,7 @@ module Make (H : Hashtbl.HashedType) = struct
       let self = !ii in
       incr ii;
       Printf.fprintf oc "\tI%d [style=filled shape=box color=green2];\n" self;
-      match Kcas.get inode.main with
+      match Kcas.Loc.get inode.main with
       | CNode cnode ->
           pr_cnode_info cnode;
           Printf.fprintf oc "\tI%d -> C%d:bmp;\n" self !ic;

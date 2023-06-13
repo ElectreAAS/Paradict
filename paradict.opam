@@ -9,11 +9,12 @@ tags: ["topics" "to describe" "your" "project"]
 homepage: "https://github.com/ElectreAAS/paradict"
 bug-reports: "https://github.com/ElectreAAS/paradict/issues"
 depends: [
-  "ocaml"
-  "dune" {>= "3.3"}
-  "kcas" {>= "0.14"}
+  "dune" {>= "3.8"}
+  "ocaml" {>= "5.0.0"}
+  "kcas" {>= "0.5.2"}
+  "ocamlformat" {with-test & = "0.25.1"}
   "domainslib" {with-test}
-  "mtime" {with-test}
+  "mtime" {with-test & >= "2.0.0"}
   "alcotest" {with-test}
   "bisect_ppx" {with-test}
   "odoc" {with-doc}
@@ -33,6 +34,3 @@ build: [
   ]
 ]
 dev-repo: "git+https://github.com/ElectreAAS/paradict.git"
-pin-depends: [
-  ["kcas.0.14" "git+https://github.com/ocaml-multicore/kcas#master"]
-]

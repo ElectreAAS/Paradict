@@ -1,4 +1,4 @@
-(lang dune 3.3)
+(lang dune 3.8)
 
 (name paradict)
 
@@ -18,15 +18,20 @@
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends
-  ocaml
-  dune
+  (ocaml
+   (>= "5.0.0"))
   (kcas
-   (>= "0.14"))
+   (>= "0.5.2"))
+  (ocamlformat
+   (and
+    :with-test
+    (= "0.25.1")))
   (domainslib :with-test)
-  (mtime :with-test)
+  (mtime
+   (and
+    :with-test
+    (>= "2.0.0")))
   (alcotest :with-test)
   (bisect_ppx :with-test))
  (tags
   (topics "to describe" your project)))
-
-; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project
