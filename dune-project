@@ -25,7 +25,7 @@
   (ocamlformat
    (and
     :with-test
-    (= "0.25.1")))
+    (= "0.26.0")))
   (domainslib :with-test)
   (mtime
    (and

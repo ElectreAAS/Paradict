@@ -89,7 +89,8 @@ let bench name domains is_left map f =
 module T = Domainslib.Task
 
 module Test
-    (P : S with type key = int) (Config : sig
+    (P : S with type key = int)
+    (Config : sig
       val is_left : bool
       val domains : int
       val pool : T.pool
