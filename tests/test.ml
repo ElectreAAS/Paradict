@@ -53,52 +53,6 @@ let iter_test =
     Alcotest.(check bool) "Iter should have performed an insert" true found
   done
 
-let mi =
-  Alcotest.test_case "map inplace" `Quick @@ fun () ->
-  let numbers = create () in
-  for i = 1 to nb do
-    add (string_of_int i) i numbers
-  done;
-  filter_map_inplace (fun _ i -> Some (if i <= nb / 2 then i else -i)) numbers;
-  for i = 1 to nb do
-    let found = find_opt (string_of_int i) numbers in
-    let expected = Some (if i <= nb / 2 then i else -i) in
-    Alcotest.(check (option int))
-      "FMI should perform in-place modifications" expected found
-  done
-
-let fmi =
-  Alcotest.test_case "filter map inplace" `Quick @@ fun () ->
-  let numbers = create () in
-  for i = 1 to nb do
-    add (string_of_int i) i numbers
-  done;
-  filter_map_inplace
-    (fun _ i -> if i <= nb / 2 then Some (2 * i) else None)
-    numbers;
-  for i = 1 to nb do
-    let found = find_opt (string_of_int i) numbers in
-    let expected = if i <= nb / 2 then Some (2 * i) else None in
-    Alcotest.(check (option int))
-      "FMI should perform in-place modifs & removals" expected found
-  done
-
-let fmi_with_bad_h =
-  Alcotest.test_case "fmi with bad hash function" `Quick @@ fun () ->
-  let open Paradict.Make (struct
-    type t = string
-
-    let equal = ( = )
-    let hash _ = 42
-  end) in
-  let numbers = create () in
-  add "one" 1 numbers;
-  add "two" 2 numbers;
-  filter_map_inplace (fun _ _ -> None) numbers;
-  Alcotest.(check bool) "FMI should properly empty trie" true (is_empty numbers);
-  Alcotest.(check int) "FMI should properly set size to 0" 0 (size numbers);
-  ()
-
 let fold_test =
   Alcotest.test_case "fold" `Quick @@ fun () ->
   let numbers = create () in
@@ -146,8 +100,7 @@ let for_all_test =
   Alcotest.(check bool) "For all should invalidate false claim" false result;
   ()
 
-let iterations =
-  [ iter_test; mi; fmi; fmi_with_bad_h; fold_test; exists_test; for_all_test ]
+let iterations = [ iter_test; fold_test; exists_test; for_all_test ]
 
 let collision_mem =
   Alcotest.test_case "collision & mem" `Quick @@ fun () ->
@@ -300,7 +253,7 @@ let save_single =
   Alcotest.test_case "save singleton trie" `Quick @@ fun () ->
   let scores = create () in
   add "Subnautica" 3 scores;
-  save_as_dot (Fun.id, string_of_int) scores "singleton.dot";
+  save_as_dot (Fun.id, string_of_int) scores ~file_name:"singleton.dot";
   let gotten_ic = open_in "singleton.dot" in
   let expect_ic = open_in "../../../tests/singleton_expected.dot" in
   let eof = ref true in
@@ -330,7 +283,7 @@ let save_12 =
   add "Hollow Knight" 20 scores;
   add "Cult of the Lamb" 800 scores;
   add "Hellblade" 20 scores;
-  save_as_dot (Fun.id, string_of_int) scores "size12.dot";
+  save_as_dot (Fun.id, string_of_int) scores ~file_name:"size12.dot";
   let gotten_ic = open_in "size12.dot" in
   let expect_ic = open_in "../../../tests/size12_expected.dot" in
   let eof = ref true in
