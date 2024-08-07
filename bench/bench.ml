@@ -29,7 +29,6 @@ module type S = sig
   val remove : key -> 'a t -> unit
   val find_opt : key -> 'a t -> 'a option
   val update : key -> ('a option -> 'a option) -> 'a t -> unit
-  val filter_map_inplace : (key -> 'a -> 'a option) -> 'a t -> unit
   val iter : (key -> 'a -> unit) -> 'a t -> unit
   val fold : (key -> 'a -> 'b -> 'b) -> 'a t -> 'b -> 'b
 end
@@ -63,9 +62,6 @@ module Naive = struct
     | None, Some v -> H.add t.tbl k v
     | Some _, Some v -> H.replace t.tbl k v
     | Some _, None -> H.remove t.tbl k
-
-  let filter_map_inplace f t =
-    with_lock t @@ fun () -> H.filter_map_inplace f t.tbl
 
   let iter fn t = with_lock t @@ fun () -> H.iter fn t.tbl
   let fold fn t z = with_lock t @@ fun () -> H.fold fn t.tbl z
@@ -114,10 +110,6 @@ struct
     bench "update" @@ fun () ->
     iter 1 (2 * nb) (fun i ->
         P.update i (fun _ -> if i mod 2 = 0 then Some i else None) t)
-
-  let () =
-    bench "filter_map_inplace" @@ fun () ->
-    P.filter_map_inplace (fun i _ -> Some (i / 2)) t
 
   let () =
     bench "iter" @@ fun () ->
