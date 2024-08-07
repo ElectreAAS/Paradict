@@ -11,8 +11,8 @@ bug-reports: "https://github.com/ElectreAAS/paradict/issues"
 depends: [
   "dune" {>= "3.8"}
   "ocaml" {>= "5.0.0"}
-  "kcas" {>= "0.5.2"}
-  "ocamlformat" {with-test & = "0.26.0"}
+  "kcas" {>= "0.7.0"}
+  "ocamlformat" {with-dev-setup & = "0.26.2"}
   "domainslib" {with-test}
   "mtime" {with-test & >= "2.0.0"}
   "alcotest" {with-test}
