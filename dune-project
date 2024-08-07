@@ -21,11 +21,11 @@
   (ocaml
    (>= "5.0.0"))
   (kcas
-   (>= "0.5.2"))
+   (>= "0.7.0"))
   (ocamlformat
    (and
-    :with-test
-    (= "0.26.0")))
+    :with-dev-setup
+    (= "0.26.2")))
   (domainslib :with-test)
   (mtime
    (and
